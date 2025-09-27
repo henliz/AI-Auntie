@@ -1,1 +1,5 @@
-backend/.env
+backend/snowflake/rsa_key.pem
+backend/snowflake/rsa_key.der
+backend/snowflake/rsa_key.pub
+.env
+

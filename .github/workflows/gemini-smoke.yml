@@ -1,0 +1,41 @@
+name: Gemini Smokes
+on:
+  push:
+    branches: ["2-gemini"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Preflight (paths + JSON parse)
+        run: |
+          node - <<'JS'
+          const fs=require('fs'), R=p=>fs.readFileSync(p,'utf8');
+          const need=[
+            "ai/prompts/router.system.md",
+            "ai/prompts/answer.system.md",
+            "ai/triage.schema.json",
+            "ai/facts.jsonl",
+            "scripts/smoke-gemini-router.mjs",
+            "scripts/smoke-gemini-answer.mjs"
+          ];
+          let ok=true; for (const p of need){ if(!fs.existsSync(p)){ console.error("MISSING",p); ok=false; } }
+          try{ JSON.parse(R("ai/triage.schema.json")); }catch(e){ console.error("Bad triage.schema.json:", e.message); ok=false; }
+          if(!ok) process.exit(1); else console.log("Preflight OK");
+          JS
+
+      - name: Router smoke (REST v1)
+        run: node scripts/smoke-gemini-router.mjs
+
+      - name: Answer smoke (REST v1)
+        run: node scripts/smoke-gemini-answer.mjs

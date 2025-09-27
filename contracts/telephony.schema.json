@@ -1,0 +1,37 @@
+{
+  "title": "Telephony Webhook Contract",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "properties": {
+        "channel": { "type": "string", "enum": ["SMS","VOICE"] },
+        "text": { "type": "string" },
+        "region": { "type": "string" }
+      },
+      "required": ["channel","text"]
+    },
+    "router_output": {
+      "type": "object",
+      "properties": {
+        "intent": { "type": "string", "enum": ["COMFORT","RESOURCE","ESCALATE"] },
+        "topic": { "type": "string" },
+        "red_flags": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": "number" }
+      },
+      "required": ["intent","topic","red_flags","confidence"]
+    },
+    "answer_output": {
+      "type": "object",
+      "properties": {
+        "channel": { "type": "string", "enum": ["SMS","VOICE"] },
+        "text": { "type": "string" },
+        "citations": {
+          "type": "array",
+          "items": { "type": "object", "properties": { "id": { "type": "string" }, "source": { "type": "string" } }, "required": ["id","source"] }
+        }
+      },
+      "required": ["channel","text","citations"]
+    }
+  }
+}
