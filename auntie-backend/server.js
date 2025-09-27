@@ -35,7 +35,7 @@ fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
 // Health
-fastify.get('/', async (_req, reply) => reply.send({ ok: true }));
+fastify.get('/Health', async (_req, reply) => reply.send({ ok: true }));
 
 // Twilio webhook → returns TwiML that connects Media Stream to /media-stream
 fastify.all('/incoming-call', async (request, reply) => {
