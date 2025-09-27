@@ -1,7 +1,7 @@
-// server.js (or index.js) — Twilio Media Streams ⇄ OpenAI Realtime (Fastify)
+// server.js — Twilio Media Streams ⇄ OpenAI Realtime (Fastify)
 // npm i fastify @fastify/formbody @fastify/websocket ws dotenv
 // Start: node server.js
-// Env: OPENAI_API_KEY=sk-...
+// Env: OPENAI_API_KEY=sk-... (Realtime access), optional PUBLIC_BASE_URL=https://<your-domain>
 
 import Fastify from 'fastify';
 import fastifyFormBody from '@fastify/formbody';
@@ -18,6 +18,7 @@ if (!OPENAI_API_KEY) {
   process.exit(1);
 }
 
+// Model + voice
 const MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview';
 const VOICE = process.env.OA_VOICE || 'alloy';
 const TEMPERATURE = Number(process.env.OA_TEMPERATURE || 0.8);
@@ -30,15 +31,15 @@ const fastify = Fastify({ logger: false });
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// (Optional) log requests; skip health to avoid spam
+// Quiet the health probe spam
 fastify.addHook('onRequest', (req, _reply, done) => {
   if (req.url !== '/health') console.log(`[REQ] ${req.method} ${req.url}`);
   done();
 });
 
-// Root + health
-fastify.get('/', async (_req, reply) => reply.send({ ok: true }));
+// Health + root
 fastify.get('/health', async (_req, reply) => reply.code(200).type('text/plain').send('OK'));
+fastify.get('/', async (_req, reply) => reply.send({ ok: true }));
 
 // Twilio webhook → returns TwiML that connects Media Stream to /media-stream
 fastify.all('/incoming-call', async (request, reply) => {
@@ -49,33 +50,29 @@ fastify.all('/incoming-call', async (request, reply) => {
     return base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
   };
 
-  // Hardcoded is fine if this is your domain. Else use ${wsBase(request)} below.
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Google.en-US-Chirp3-HD-Aoede">Connecting you to the A. I. voice assistant.</Say>
-  <Connect><Stream url="wss://auntie-backend.onrender.com/media-stream" /></Connect>
-  <!-- or: <Connect><Stream url="${wsBase(request)}/media-stream" /></Connect> -->
+  <Connect><Stream url="${wsBase(request)}/media-stream" /></Connect>
 </Response>`;
 
   reply.type('text/xml').send(twiml);
 });
 
 // Media Stream WS endpoint — bridges Twilio <-> OpenAI Realtime
-fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => {
+fastify.get('/media-stream', { websocket: true }, (connection /* ws */) => {
   console.log('────────────────────────────────────────────────────────');
   console.log('[Twilio] media stream connected');
 
   let streamSid = null;
   let callSid = null;
 
-  // Track whether we've buffered any audio since the last commit
+  // Optional: micro-commit to keep buffers small (~20ms per Twilio media frame)
   let hasBufferedAudio = false;
-
-  // Optional micro-commit to limit buffer growth (~20ms per Twilio 'media' frame)
   let framesSinceCommit = 0;
   const FRAMES_BEFORE_COMMIT = Number(process.env.FRAMES_BEFORE_COMMIT || 10); // ~200ms
 
-  // OpenAI Realtime WS (v1) with subprotocol + beta header
+  // OpenAI Realtime WS with proper handshake
   const oa = new WebSocket(
     `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(MODEL)}&temperature=${encodeURIComponent(TEMPERATURE)}`,
     'realtime',
@@ -91,40 +88,29 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
   let responseInFlight = false;
 
   const safeSendOA = (obj) => {
-    if (oaOpen && oa.readyState === WebSocket.OPEN) {
-      oa.send(JSON.stringify(obj));
-    }
+    if (oaOpen && oa.readyState === WebSocket.OPEN) oa.send(JSON.stringify(obj));
   };
 
-  // When OA socket opens, configure session (no legacy fields!)
+  // OpenAI socket open → configure session (✅ GA fields; no legacy)
   oa.on('open', () => {
     oaOpen = true;
     console.log('[OpenAI] websocket open');
 
-    // ✅ Correct GA fields: modalities, voice, *flat* audio format fields, turn_detection, instructions
     safeSendOA({
       type: 'session.update',
       session: {
         modalities: ['audio', 'text'],
         instructions: SYSTEM_MESSAGE,
         voice: VOICE,
-        input_audio_format: 'g711_ulaw',
-        output_audio_format: 'g711_ulaw',
+        input_audio_format: 'g711_ulaw',   // Twilio PCMU μ-law @ 8kHz
+        output_audio_format: 'g711_ulaw',  // Return PCMU μ-law
         turn_detection: { type: 'server_vad' },
       },
     });
-
-    // Optional: greet so caller hears something immediately
-    safeSendOA({
-      type: 'response.create',
-      response: {
-        modalities: ['audio', 'text'],
-        instructions: "Hi! I'm listening—go ahead.",
-      },
-    });
+    // NOTE: Do NOT greet here—wait until we have streamSid from Twilio 'start'
   });
 
-  // OA → handle events (audio deltas, VAD, lifecycle)
+  // Handle OpenAI events
   oa.on('message', (buf) => {
     let msg;
     try { msg = JSON.parse(buf.toString()); } catch { return; }
@@ -134,7 +120,6 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
     if (msg.type === 'response.completed' || msg.type === 'response.done') responseInFlight = false;
 
     if (msg.type === 'input_audio_buffer.speech_stopped') {
-      // Caller stopped talking → commit ONLY if we actually buffered audio
       if (hasBufferedAudio) {
         safeSendOA({ type: 'input_audio_buffer.commit' });
         hasBufferedAudio = false;
@@ -144,13 +129,12 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
       }
     }
 
-    // ✅ Handle both GA and older naming just in case
+    // ✅ GA name is 'response.audio.delta'; keep backward alias too
     if ((msg.type === 'response.audio.delta' || msg.type === 'response.output_audio.delta') && msg.delta && streamSid) {
-      // Forward base64 μ-law audio straight to Twilio (do NOT re-encode)
       connection.send(JSON.stringify({
         event: 'media',
         streamSid,
-        media: { payload: msg.delta },
+        media: { payload: msg.delta }, // already base64 μ-law; forward as-is
       }));
     }
 
@@ -170,21 +154,30 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
         streamSid = m.start?.streamSid || streamSid;
         callSid = m.start?.callSid || callSid;
         console.log(`[Twilio] start: callSid=${callSid} streamSid=${streamSid}`);
+
+        // Now it's safe to talk—Twilio can accept media for this streamSid
+        if (oaOpen) {
+          safeSendOA({
+            type: 'response.create',
+            response: {
+              modalities: ['audio', 'text'],
+              instructions: "Hi, I'm Auntie! I'm listening—go ahead.",
+            },
+          });
+        }
         break;
 
       case 'media':
         if (!oaOpen || oa.readyState !== WebSocket.OPEN) break;
         if (m.media?.payload) {
-          // Append μ-law audio frames from Twilio to OA buffer
           safeSendOA({ type: 'input_audio_buffer.append', audio: m.media.payload });
           hasBufferedAudio = true;
 
-          // Optional micro-commit to keep latency snappy; safe to remove
+          // Optional micro-commit for snappier turns
           framesSinceCommit++;
           if (framesSinceCommit >= FRAMES_BEFORE_COMMIT) {
             safeSendOA({ type: 'input_audio_buffer.commit' });
             framesSinceCommit = 0;
-            // Do not request a response here; rely on VAD or longer user pauses
           }
         }
         break;
@@ -195,12 +188,11 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
         break;
 
       default:
-        // Other Twilio events (e.g., 'mark') can be ignored
+        // ignore 'mark' and others
         break;
     }
   });
 
-  // Cleanup when caller hangs up
   connection.on('error', (e) => console.error('[WS] Twilio socket error:', e?.message || e));
   connection.on('close', () => {
     try { oa.close(); } catch {}
