@@ -2,6 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const twilio = require('twilio');
 const { formatReply } = require('./composer');
+const ai = require('./ai');
+const sf = require('./snowflake');
+const db = require('./mongo');
+const { formatReply } = require('./composer'); // you already added this earlier
+
 
 
 const app = express();
@@ -11,22 +16,39 @@ app.use(express.urlencoded({ extended: false })); // Twilio posts form-encoded
 app.get('/health', (_req, res) => res.send('ok'));
 
 // SMS webhook — returns TwiML with a hard-coded reply
-app.post('/twilio/sms', (req, res) => {
+app.all('/twilio/sms', async (req, res) => {
+  const from = req.body.From || '';
   const body = (req.body.Body || '').trim();
-  const reply_text =
-  "You’ve got this. Try 20 minutes of skin-to-skin and sip some water—small resets help both you and baby tonight.";
 
-  const resources = [
-    { name: 'PSI Helpline', phone: '1-800-944-4773', url: 'https://postpartum.net' },
-    { name: 'Public Health Nurse (Waterloo)', phone: '519-575-4400', url: 'https://www.regionofwaterloo.ca' }
-  ];
+  try {
+    // 1) read minimal context
+    const context = await db.getContext(from);
 
-  const twiml = new twilio.twiml.MessagingResponse();
-  twiml.message( formatReply({ bodyText: reply_text, resources }) );
-  return res.type('text/xml').send(twiml.toString());
+    // 2) ask "AI" (stubbed for now)
+    const { intent, topic, region, reply_text } =
+      await ai.getAuntieReply({ text: body, context });
 
-  res.type('text/xml').send(twiml.toString()); // Twilio expects XML
+    // 3) if needed, fetch resources (stubbed for now)
+    let resources = [];
+    if (intent === 'RESOURCE' || intent === 'ESCALATE') {
+      resources = await sf.lookupResources({ topic, region });
+    }
+
+    // 4) save the message (stubbed store)
+    await db.saveMessage({ phone: from, intent, topic, message: body });
+
+    // 5) compose a short, cozy SMS and send
+    const twiml = new twilio.twiml.MessagingResponse();
+    twiml.message( formatReply({ bodyText: reply_text, resources }) );
+    return res.type('text/xml').send(twiml.toString());
+
+  } catch (e) {
+    const twiml = new twilio.twiml.MessagingResponse();
+    twiml.message("Auntie glitched—try again in a minute. If it feels urgent, call local emergency. 🌸");
+    return res.type('text/xml').send(twiml.toString());
+  }
 });
+
 
 // optional: a voice placeholder so calls don’t 404
 app.post('/twilio/voice', (_req, res) => {
