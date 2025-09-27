@@ -26,11 +26,9 @@ if (!OPENAI_API_KEY) {
   process.exit(1);
 }
 
-// ---- Config ----
-const MODEL = OPENAI_REALTIME_MODEL || 'gpt-realtime-preview';
-const SERVER_PORT = Number(PORT || 5050);
-const VOICE = 'alloy';           // OpenAI realtime voice id
-const TEMPERATURE = 0.6;
+// Initialize Fastify
+const fastify = Fastify();
+fastify.register(fastifyWs);
 
 const SYSTEM_MESSAGE = `You are "Auntie"—a warm, calm, postpartum support companion.
 - Default to kind, concise, practical advice that can be done immediately.
