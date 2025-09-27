@@ -55,16 +55,12 @@ function wsStreamUrl(req) {
 
 app.all('/twilio/voice-rt', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
-
-  // Short hello so callers know it's live
   twiml.say({ voice: 'Polly.Kendra' }, "Hi love, I’m Auntie. I’m listening now.");
-
-  // Bidirectional media stream to our WS endpoint
   const connect = twiml.connect();
-  connect.stream({ url: wsStreamUrl(req) }); // <-- no 'track' here
-
+  connect.stream({ url: wsStreamUrl(req) }); // no 'track' here
   return res.type('text/xml').send(twiml.toString());
 });
+
 
 
 
