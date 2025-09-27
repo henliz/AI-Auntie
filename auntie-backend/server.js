@@ -53,7 +53,7 @@ function wsStreamUrl(req) {
   return base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/twilio-media';
 }
 
-app.post('/twilio/voice-rt', (req, res) => {
+app.all('/twilio/voice-rt', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
 
   // Short hello so callers know it's connected
