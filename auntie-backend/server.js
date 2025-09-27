@@ -89,27 +89,23 @@ wss.on('connection', (ws, request) => {
   let oaOpen = false;
 
   oa.on('open', () => {
-    oaOpen = true;
-    console.log('[OpenAI] websocket open');
+        oaOpen = true;
+        console.log('[OpenAI] websocket open');
 
-    // Session: telephony-safe µ-law @ 8kHz in/out, server VAD
-    oa.send(
-      JSON.stringify({
-        type: 'session.update',
-        session: {
-          type: 'realtime',
-          model: MODEL,
-          output_modalities: ['audio'],
-          // inside session.update
-          audio: {
-            input:  { format: { type: 'g711_ulaw', sample_rate_hz: 8000 }, turn_detection: { type: 'server_vad' } },
-            output: { format: { type: 'g711_ulaw', sample_rate_hz: 8000 }, voice: VOICE },
-          },
-
-          instructions: SYSTEM_MESSAGE,
+        // Session: telephony-safe µ-law @ 8kHz in/out, server VAD
+   oa.send(JSON.stringify({
+      type: 'session.update',
+      session: {
+        // DO NOT include 'type' here; model is already in the WS URL
+        output_modalities: ['audio'],
+        audio: {
+          input:  { format: { type: 'g711_ulaw', sample_rate_hz: 8000 }, turn_detection: { type: 'server_vad' } },
+          output: { format: { type: 'g711_ulaw', sample_rate_hz: 8000 }, voice: VOICE },
         },
-      })
-    );
+        instructions: SYSTEM_MESSAGE,
+      },
+  }));
+
 
     // Optional: greet so caller hears something immediately
     oa.send(
@@ -117,10 +113,40 @@ wss.on('connection', (ws, request) => {
         type: 'response.create',
         response: {
           modalities: ['audio', 'text'], // must include text with audio
-          instructions: 'Hi! I’m your assistant. I’m listening—go ahead.',
+          instructions: 'Hi! I’m your auntie. I’m listening—go ahead.',
         },
       })
     );
+  });
+
+  let responseInFlight = false;
+
+  oa.on('message', (buf) => {
+    let msg; try { msg = JSON.parse(buf.toString()); } catch { return; }
+
+    if (msg.type === 'session.updated') {
+      console.log('[OpenAI] session.updated ok');
+    }
+
+    if (msg.type === 'response.created') responseInFlight = true;
+    if (msg.type === 'response.completed' || msg.type === 'response.done') responseInFlight = false;
+
+    if (msg.type === 'input_audio_buffer.speech_stopped') {
+      // caller stopped talking → commit and (if free) ask model to speak
+      oa.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+      if (!responseInFlight) {
+        oa.send(JSON.stringify({
+          type: 'response.create',
+          response: { modalities: ['audio','text'] }
+        }));
+      }
+    }
+
+    if (msg.type === 'response.output_audio.delta' && msg.delta && streamSid) {
+      ws.send(JSON.stringify({ event: 'media', streamSid, media: { payload: msg.delta } }));
+    }
+
+    if (msg.type === 'error') console.error('[OpenAI] error event:', msg);
   });
 
   // OA → Twilio
@@ -166,26 +192,21 @@ wss.on('connection', (ws, request) => {
         console.log(`[Twilio] start: callSid=${callSid} streamSid=${streamSid}`);
         break;
 
-      case 'media':
-        if (!twilioStarted || !oaOpen || oa.readyState !== WebSocket.OPEN) break;
+      // Twilio → OA
+    case 'media':
+      if (!twilioStarted || !oaOpen || oa.readyState !== WebSocket.OPEN) break;
 
-        // Forward µ-law base64 as-is to OA
-        oa.send(
-          JSON.stringify({
-            type: 'input_audio_buffer.append',
-            audio: m.media.payload,
-          })
-        );
-
+      if (m.media?.payload) {
+        oa.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: m.media.payload }));
         framesSinceCommit++;
-        // increment framesSinceCommit on each media frame
         if (framesSinceCommit >= FRAMES_BEFORE_COMMIT) {
+          // optional micro-commit; OK to delete this entirely and rely only on speech_stopped
           oa.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-          oa.send(JSON.stringify({ type: 'response.create', response: { modalities: ['audio','text'] } }));
           framesSinceCommit = 0;
         }
+      }
+    break;
 
-        break;
 
       case 'stop':
         console.log('[Twilio] stop');
