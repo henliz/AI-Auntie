@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "fastify": "^4.28.1",
-    "@fastify/websocket": "^7.3.0",
+    "@fastify/websocket": "8.3.1",
     "ws": "^8.18.0",
     "dotenv": "^16.4.5"
   }
