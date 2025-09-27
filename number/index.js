@@ -404,3 +404,4 @@ fastify.listen({ port: PORT }, (err) => {
     }
     console.log(`Server is listening on port ${PORT}`);
 });
+
