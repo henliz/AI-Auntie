@@ -115,7 +115,7 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
     safeSendOA({
       type: 'session.update',
       session: {
-        output_modalities: ['audio'],
+        output_modalities: ['audio', 'text'],
         audio: {
           input: {
             format: { type: 'g711_ulaw', sample_rate_hz: 8000 },
