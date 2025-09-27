@@ -16,7 +16,20 @@ if (!OPENAI_API_KEY) {
 
 // Initialize Fastify
 const fastify = Fastify();
-fastify.register(fastifyWs);
+
+// Tell the WS server to accept Twilio's subprotocol
+fastify.register(fastifyWs, {
+  options: {
+    handleProtocols: (protocols /* string[] */) => {
+      if (protocols.includes('audio')) return 'audio';  // Twilio Media Streams
+      if (protocols.includes('media')) return 'media';  // (older/alt)
+      return protocols[0] || false;                     // or reject if none
+    },
+    perMessageDeflate: false
+  }
+});
+
+
 
 // Constants
 const SYSTEM_MESSAGE = 'You are a helpful and bubbly AI assistant who loves to chat about anything the user is interested about and is prepared to offer them facts. You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. Always stay positive, but work in a joke when appropriate.';
