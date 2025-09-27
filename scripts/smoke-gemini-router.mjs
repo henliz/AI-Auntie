@@ -1,23 +1,22 @@
+// REST v1 router smoke (no SDK)
 import fs from "node:fs";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+
+const API_KEY = process.env.GEMINI_API_KEY || "";
+if (!API_KEY) { console.error("Missing GEMINI_API_KEY"); process.exit(1); }
 
 const systemInstruction = fs.readFileSync("ai/prompts/router.system.md","utf8");
 const triageSchema = JSON.parse(fs.readFileSync("ai/triage.schema.json","utf8"));
 const userText = "Baby won’t latch for 10 minutes—normal?";
 
-const apiKey = process.env.GEMINI_API_KEY || "";
-if (!apiKey) { console.error("Missing GEMINI_API_KEY"); process.exit(1); }
-
-// Try multiple IDs that cover v1beta + legacy
-const CANDIDATES = [
-  "gemini-pro",             // legacy, commonly available on v1beta
-  "gemini-1.0-pro",         // some projects expose this
-  "gemini-1.5-flash-001",   // older 1.5
-  "gemini-1.5-flash",       // alias → may map to -002 (can 404)
-  "gemini-1.5-flash-8b"     // new-ish, sometimes blocked on v1beta
+const PREFERRED = [
+  "models/gemini-1.5-flash-8b",
+  "models/gemini-1.5-flash-001",
+  "models/gemini-1.5-flash",
+  "models/gemini-1.0-pro",
+  "models/gemini-pro"
 ];
 
-function parseJsonLoose(s) {
+function cleanJson(s) {
   return JSON.parse(
     s.trim()
      .replace(/```json/gi,"").replace(/```/g,"")
@@ -25,47 +24,52 @@ function parseJsonLoose(s) {
   );
 }
 
-async function tryRoute(modelName) {
-  console.log("MODEL:", modelName);
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction,
-    tools: [{ functionDeclarations: [triageSchema] }]
-  });
+async function listModelsV1() {
+  const url = `https://generativelanguage.googleapis.com/v1/models?key=${API_KEY}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`listModels ${r.status} ${r.statusText}`);
+  return (await r.json()).models || [];
+}
 
-  const res = await model.generateContent({
-    contents: [{
-      role: "user",
-      parts: [{ text: `Return ONLY JSON {intent,topic,red_flags,confidence}.\nUser: "${userText}"` }]
-    }],
-    toolConfig: { functionCallingConfig: { mode: "ANY" } }
-  });
-
-  let routed = res.response.functionCalls?.[0]?.args ?? null;
-  if (!routed) routed = parseJsonLoose(res.response.text());
-  return routed;
+async function genContentV1(model, contents) {
+  const url = `https://generativelanguage.googleapis.com/v1/${model}:generateContent?key=${API_KEY}`;
+  const body = { contents };
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(`generateContent ${r.status} ${r.statusText}`);
+  return await r.json();
 }
 
 (async () => {
-  for (const name of CANDIDATES) {
-    try {
-      const routed = await tryRoute(name);
-      console.log("USER:", userText);
-      console.log("ROUTED:", routed);
-      if (!["COMFORT","RESOURCE","ESCALATE"].includes(routed.intent)) throw new Error("Invalid intent");
-      process.exit(0);
-    } catch (e) {
-      const msg = String(e?.message || e);
-      if (/404|Not\s*Found|model .* not found|unsupported/i.test(msg)) {
-        console.warn("Model not available here — trying next candidate…");
-        continue;
-      }
-      console.error("Routing error:", msg);
-      if (e?.status || e?.statusText) console.error("HTTP:", e.status, e.statusText);
-      process.exit(1);
-    }
+  try {
+    const models = await listModelsV1();
+    const names = models.map(m => m.name);
+    const usable = names.filter(n => PREFERRED.includes(n));
+    const pick = usable[0] || names.find(n => /gemini.*(pro|flash)/.test(n));
+    if (!pick) throw new Error("No v1 models visible to this key.");
+
+    console.log("USING MODEL (v1):", pick);
+
+    // Prepare contents (system + user). REST v1 doesn’t have function calling, so we force JSON output in the user turn.
+    const contents = [
+      { role: "user", parts: [{ text: `${systemInstruction}\n\nReturn ONLY JSON {intent,topic,red_flags,confidence}.\nUser: "${userText}"` }] }
+    ];
+
+    const data = await genContentV1(pick, contents);
+
+    // Parse
+    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text).join("") || "";
+    let routed;
+    try { routed = cleanJson(text); } catch { routed = null; }
+
+    if (!routed) throw new Error("Router returned non-JSON");
+
+    console.log("USER:", userText);
+    console.log("ROUTED:", routed);
+    if (!["COMFORT","RESOURCE","ESCALATE"].includes(routed.intent)) throw new Error("Invalid intent");
+
+    process.exit(0);
+  } catch (e) {
+    console.error("Router smoke failed:", e.message || e);
+    process.exit(1);
   }
-  console.error("All model candidates failed (404).");
-  process.exit(1);
 })();

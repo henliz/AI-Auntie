@@ -17,7 +17,6 @@ jobs:
         with:
           node-version: "20"
 
-      # Quick sanity: required files + JSON parse
       - name: Preflight (paths + JSON parse)
         run: |
           node - <<'JS'
@@ -35,14 +34,8 @@ jobs:
           if(!ok) process.exit(1); else console.log("Preflight OK");
           JS
 
-      - name: Install Gemini SDK
-        run: |
-          npm init -y
-          npm i @google/generative-ai@0.21.0
-          node -e "console.log('SDK', require('@google/generative-ai/package.json').version)"
-
-      - name: Router smoke
+      - name: Router smoke (REST v1)
         run: node scripts/smoke-gemini-router.mjs
 
-      - name: Answer smoke
+      - name: Answer smoke (REST v1)
         run: node scripts/smoke-gemini-answer.mjs
