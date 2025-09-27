@@ -108,8 +108,8 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
         modalities: ['audio', 'text'],
         instructions: SYSTEM_MESSAGE,
         voice: VOICE,
-        input_audio_format: { type: 'g711_ulaw', sample_rate_hz: 8000 },
-        output_audio_format: { type: 'g711_ulaw', sample_rate_hz: 8000 },
+        input_audio_format: 'g711_ulaw',
+        output_audio_format: 'g711_ulaw',
         turn_detection: { type: 'server_vad' },
       },
     });
