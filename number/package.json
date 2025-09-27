@@ -1,0 +1,20 @@
+{
+  "name": "number",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "type": "module",
+  "dependencies": {
+    "@fastify/formbody": "^8.0.2",
+    "@fastify/websocket": "^11.2.0",
+    "dotenv": "^17.2.2",
+    "fastify": "^5.6.1",
+    "ws": "^8.18.3"
+  }
+}
