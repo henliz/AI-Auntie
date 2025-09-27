@@ -15,17 +15,17 @@ const payload = {
 const apiKey = process.env.GEMINI_API_KEY || "";
 if (!apiKey) { console.error("Missing GEMINI_API_KEY"); process.exit(1); }
 
-// Use safe model for your project
-const modelName = "gemini-1.5-flash-8b";
-console.log("ANSWER_MODEL:", modelName);
+const MODEL_CANDIDATES = ["gemini-1.5-flash-8b", "gemini-1.5-flash-001"];
 
-const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ model: modelName, systemInstruction });
+async function tryAnswer(modelName) {
+  console.log("ANSWER_MODEL:", modelName);
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: modelName, systemInstruction });
 
-const res = await model.generateContent({
-  contents: [{
-    role: "user",
-    parts: [{ text:
+  const res = await model.generateContent({
+    contents: [{
+      role: "user",
+      parts: [{ text:
 `Channel=${payload.channel}
 Route=${payload.route}
 User="${payload.user}"
@@ -34,9 +34,28 @@ Facts:
 - ${payload.facts.join("\n- ")}
 
 Format for SMS: 2–4 short sentences + up to 3 bullets. End with “Want me to text this?”` }]
-  }]
-});
+    }]
+  });
 
-const text = res.response.text();
-console.log("ANSWER:", text);
-if (!/Want me to text/i.test(text)) { console.error("Answer missing checkback"); process.exit(1); }
+  const text = res.response.text();
+  console.log("ANSWER:", text);
+  if (!/Want me to text/i.test(text)) throw new Error("Answer missing checkback");
+}
+
+(async () => {
+  for (const name of MODEL_CANDIDATES) {
+    try { await tryAnswer(name); process.exit(0); }
+    catch (e) {
+      const msg = String(e?.message || e);
+      if (/404|Not Found|not found/i.test(msg)) {
+        console.warn("Model 404 — trying next candidate…");
+        continue;
+      }
+      console.error("Answer error:", msg);
+      if (e?.status || e?.statusText) console.error("HTTP:", e.status, e.statusText);
+      process.exit(1);
+    }
+  }
+  console.error("All answer model candidates failed (404).");
+  process.exit(1);
+})();
