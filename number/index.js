@@ -110,7 +110,7 @@ fastify.get('/gemini/test', async (_req, reply) => {
   }
   </script>`);
   });
-  
+
 
 // -----------------------------
 // WebSocket route for media-stream (Twilio <-> OpenAI Realtime)
