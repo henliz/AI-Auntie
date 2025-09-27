@@ -9,3 +9,7 @@ Rules:
 - COMFORT when reassurance/normalization is the main need and no red flags.
 
 Be conservative on safety. topic must be one word from the list. confidence in [0,1].
+
+OUTPUT FORMAT (MANDATORY):
+Return ONLY raw JSON (no prose, no code fences) exactly like:
+{"intent":"COMFORT|RESOURCE|ESCALATE","topic":"sleep|latch|pain|bleeding|mood|incision|breast|baby|other","red_flags":["..."],"confidence":0.0-1.0}
