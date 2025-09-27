@@ -1,9 +1,7 @@
-// index.js — Twilio Media Streams ⇄ OpenAI Realtime (Fastify)
+// server.js (or index.js) — Twilio Media Streams ⇄ OpenAI Realtime (Fastify)
 // npm i fastify @fastify/formbody @fastify/websocket ws dotenv
-// Run: node index.js
-// Env: OPENAI_API_KEY=sk-...  (must have Realtime access)
-// Twilio "A CALL COMES IN" → https://<public-host>/incoming-call
-// <Stream> url → wss://<public-host>/media-stream
+// Start: node server.js
+// Env: OPENAI_API_KEY=sk-...
 
 import Fastify from 'fastify';
 import fastifyFormBody from '@fastify/formbody';
@@ -28,29 +26,19 @@ const SYSTEM_MESSAGE =
   process.env.SYSTEM_MESSAGE ||
   'You are a helpful, bubbly phone assistant. Keep answers concise, warm, and lightly humorous.';
 
-// ───────────────────────────────────────────────────────────────────────────────
-
 const fastify = Fastify({ logger: false });
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Health
-// Log requests so you can SEE the health probe hitting you
+// (Optional) log requests; skip health to avoid spam
 fastify.addHook('onRequest', (req, _reply, done) => {
-  console.log(`[REQ] ${req.method} ${req.url}`);
+  if (req.url !== '/health') console.log(`[REQ] ${req.method} ${req.url}`);
   done();
 });
 
-// add this near your other routes
-fastify.get('/', async (_req, reply) => {
-  reply.send({ ok: true });
-});
-
-
-// Health check: super fast, always-200
-fastify.get('/health', async (_req, reply) => {
-  reply.code(200).type('text/plain').send('OK');
-});
+// Root + health
+fastify.get('/', async (_req, reply) => reply.send({ ok: true }));
+fastify.get('/health', async (_req, reply) => reply.code(200).type('text/plain').send('OK'));
 
 // Twilio webhook → returns TwiML that connects Media Stream to /media-stream
 fastify.all('/incoming-call', async (request, reply) => {
@@ -61,10 +49,12 @@ fastify.all('/incoming-call', async (request, reply) => {
     return base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
   };
 
+  // Hardcoded is fine if this is your domain. Else use ${wsBase(request)} below.
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Google.en-US-Chirp3-HD-Aoede">Connecting you to the A. I. voice assistant.</Say>
   <Connect><Stream url="wss://auntie-backend.onrender.com/media-stream" /></Connect>
+  <!-- or: <Connect><Stream url="${wsBase(request)}/media-stream" /></Connect> -->
 </Response>`;
 
   reply.type('text/xml').send(twiml);
@@ -85,7 +75,7 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
   let framesSinceCommit = 0;
   const FRAMES_BEFORE_COMMIT = Number(process.env.FRAMES_BEFORE_COMMIT || 10); // ~200ms
 
-  // OpenAI Realtime WS (v1) with proper subprotocol + beta header
+  // OpenAI Realtime WS (v1) with subprotocol + beta header
   const oa = new WebSocket(
     `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(MODEL)}&temperature=${encodeURIComponent(TEMPERATURE)}`,
     'realtime',
@@ -106,27 +96,21 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
     }
   };
 
-  // When OA socket opens, configure session for telephony-safe μ-law @ 8kHz
+  // When OA socket opens, configure session (no legacy fields!)
   oa.on('open', () => {
     oaOpen = true;
     console.log('[OpenAI] websocket open');
 
-    // session.update: g711 μ-law in/out + server VAD + system instructions
+    // ✅ Correct GA fields: modalities, voice, *flat* audio format fields, turn_detection, instructions
     safeSendOA({
       type: 'session.update',
       session: {
         modalities: ['audio', 'text'],
-        audio: {
-          input: {
-            format: { type: 'g711_ulaw', sample_rate_hz: 8000 },
-            turn_detection: { type: 'server_vad' },
-          },
-          output: {
-            format: { type: 'g711_ulaw', sample_rate_hz: 8000 },
-            voice: VOICE,
-          },
-        },
         instructions: SYSTEM_MESSAGE,
+        voice: VOICE,
+        input_audio_format: { type: 'g711_ulaw', sample_rate_hz: 8000 },
+        output_audio_format: { type: 'g711_ulaw', sample_rate_hz: 8000 },
+        turn_detection: { type: 'server_vad' },
       },
     });
 
@@ -143,16 +127,9 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
   // OA → handle events (audio deltas, VAD, lifecycle)
   oa.on('message', (buf) => {
     let msg;
-    try {
-      msg = JSON.parse(buf.toString());
-    } catch {
-      return;
-    }
+    try { msg = JSON.parse(buf.toString()); } catch { return; }
 
-    if (msg.type === 'session.updated') {
-      console.log('[OpenAI] session.updated ok');
-    }
-
+    if (msg.type === 'session.updated') console.log('[OpenAI] session.updated ok');
     if (msg.type === 'response.created') responseInFlight = true;
     if (msg.type === 'response.completed' || msg.type === 'response.done') responseInFlight = false;
 
@@ -167,20 +144,17 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
       }
     }
 
-    if (msg.type === 'response.output_audio.delta' && msg.delta && streamSid) {
+    // ✅ Handle both GA and older naming just in case
+    if ((msg.type === 'response.audio.delta' || msg.type === 'response.output_audio.delta') && msg.delta && streamSid) {
       // Forward base64 μ-law audio straight to Twilio (do NOT re-encode)
-      connection.send(
-        JSON.stringify({
-          event: 'media',
-          streamSid,
-          media: { payload: msg.delta },
-        })
-      );
+      connection.send(JSON.stringify({
+        event: 'media',
+        streamSid,
+        media: { payload: msg.delta },
+      }));
     }
 
-    if (msg.type === 'error') {
-      console.error('[OpenAI] error event:', msg);
-    }
+    if (msg.type === 'error') console.error('[OpenAI] error event:', msg);
   });
 
   oa.on('close', () => console.log('[OpenAI] websocket closed'));
@@ -189,11 +163,7 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
   // Twilio → OA
   connection.on('message', (raw) => {
     let m;
-    try {
-      m = JSON.parse(raw.toString());
-    } catch {
-      return;
-    }
+    try { m = JSON.parse(raw.toString()); } catch { return; }
 
     switch (m.event) {
       case 'start':
@@ -221,9 +191,7 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
 
       case 'stop':
         console.log('[Twilio] stop');
-        try {
-          oa.close();
-        } catch {}
+        try { oa.close(); } catch {}
         break;
 
       default:
@@ -233,10 +201,9 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */, req) => 
   });
 
   // Cleanup when caller hangs up
+  connection.on('error', (e) => console.error('[WS] Twilio socket error:', e?.message || e));
   connection.on('close', () => {
-    try {
-      oa.close();
-    } catch {}
+    try { oa.close(); } catch {}
     console.log('[Twilio] media stream closed');
   });
 });
