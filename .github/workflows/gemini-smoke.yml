@@ -38,7 +38,7 @@ jobs:
       - name: Install Gemini SDK
         run: |
           npm init -y
-          npm i @google/generative-ai@latest
+          npm i @google/generative-ai@0.21.0
           node -e "console.log('SDK', require('@google/generative-ai/package.json').version)"
 
       - name: Router smoke
