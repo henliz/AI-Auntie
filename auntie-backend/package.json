@@ -2,10 +2,14 @@
   "name": "auntie-backend",
   "private": true,
   "type": "module",
-  "scripts": { "start": "node server.js" },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22 <23"
+  },
   "dependencies": {
     "fastify": "^4.28.1",
-    "@fastify/formbody": "^8.4.0",
     "@fastify/websocket": "^7.3.0",
     "ws": "^8.18.0",
     "dotenv": "^16.4.5"

@@ -3,16 +3,16 @@
 import Fastify from 'fastify';
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
-import fastifyFormBody from '@fastify/formbody';
 import fastifyWs from '@fastify/websocket';
 
 dotenv.config();
 
 const PORT = process.env.PORT || 5050;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
+const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime'; // or gpt-4o-realtime-preview
 const VOICE = process.env.OA_VOICE || 'alloy';
 const TEMPERATURE = Number(process.env.OA_TEMPERATURE || 0.8);
+
 const SYSTEM_MESSAGE =
   process.env.SYSTEM_MESSAGE ||
   'You are Auntie — a warm, evidence-informed postpartum support line. Empathy first; 1–3 simple steps; thresholds not diagnoses. Be concise, kind, non-judgmental.';
@@ -23,8 +23,6 @@ if (!OPENAI_API_KEY) {
 
 function makeApp() {
   const fastify = Fastify();
-
-  fastify.register(fastifyFormBody);
   fastify.register(fastifyWs);
 
   // Health + root
@@ -75,10 +73,10 @@ function makeApp() {
             output_modalities: ['audio'],
             audio: {
               input:  { format: { type: 'audio/pcmu' }, turn_detection: { type: 'server_vad' } },
-              output: { format: { type: 'audio/pcmu' }, voice: VOICE },
+              output: { format: { type: 'audio/pcmu' }, voice: VOICE }
             },
-            instructions: SYSTEM_MESSAGE,
-          },
+            instructions: SYSTEM_MESSAGE
+          }
         };
         oa.send(JSON.stringify(sessionUpdate));
       };
@@ -133,7 +131,7 @@ function makeApp() {
           connection.send(JSON.stringify({
             event: 'media',
             streamSid,
-            media: { payload: msg.delta }
+            media: { payload: msg.delta } // base64 μ-law
           }));
           if (!responseStartTimestampTwilio) responseStartTimestampTwilio = latestMediaTimestamp;
           if (msg.item_id) lastAssistantItem = msg.item_id;
@@ -173,7 +171,7 @@ function makeApp() {
             if (oa.readyState === WebSocket.OPEN && data.media?.payload) {
               oa.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: data.media.payload }));
               oa.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-              // No response.create here — wait for speech_stopped
+              // DO NOT call response.create here — wait for speech_stopped
             }
             break;
 
@@ -201,8 +199,6 @@ function makeApp() {
 async function start() {
   try {
     const app = makeApp();
-
-    // extra crash visibility
     process.on('unhandledRejection', (r) => console.error('UNHANDLED REJECTION', r));
     process.on('uncaughtException', (e) => { console.error('UNCAUGHT EXCEPTION', e); process.exit(1); });
 
