@@ -86,6 +86,11 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */) => {
 
   let oaOpen = false;
   let responseInFlight = false;
+  let streamSid = null;
+  let greeted = false;
+
+  // Fire the greeting once both OA is open and we have a streamSid
+  maybeGreet();
 
   const safeSendOA = (obj) => {
     if (oaOpen && oa.readyState === WebSocket.OPEN) oa.send(JSON.stringify(obj));
@@ -149,22 +154,21 @@ fastify.get('/media-stream', { websocket: true }, (connection /* ws */) => {
     let m;
     try { m = JSON.parse(raw.toString()); } catch { return; }
 
+    // debug: show first few event types
+    if (m?.event && (m.event === 'start' || m.event === 'media')) {
+      // Uncomment if you want to see media spam:
+      // console.log('[Twilio] event:', m.event);
+    }
+
     switch (m.event) {
       case 'start':
         streamSid = m.start?.streamSid || streamSid;
         callSid = m.start?.callSid || callSid;
         console.log(`[Twilio] start: callSid=${callSid} streamSid=${streamSid}`);
 
-        // Now it's safe to talk—Twilio can accept media for this streamSid
-        if (oaOpen) {
-          safeSendOA({
-            type: 'response.create',
-            response: {
-              modalities: ['audio', 'text'],
-              instructions: "Hi, I'm Auntie! I'm listening—go ahead.",
-            },
-          });
-        }
+        // Greet if OA is ready; if not, OA's 'open' will trigger it
+        maybeGreet();
+
         break;
 
       case 'media':
