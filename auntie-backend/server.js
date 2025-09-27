@@ -40,16 +40,16 @@ app.get('/health', async (_r, reply) => reply.type('text/plain').send('OK'));
 app.get('/', async (_r, reply) => reply.send({ ok: true }));
 
 // TwiML webhook — use same host for HTTPS and WSS
-app.all('/incoming-call', async (request, reply) => {
-  const base = (process.env.PUBLIC_BASE_URL || `https://${request.headers.host}`).replace(/\/+$/, '');
-  const wssBase = base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:'); // force WSS
+app.all('/incoming-call', async (_req, reply) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Google.en-US-Chirp3-HD-Aoede">Connecting you to Auntie, the A. I. voice assistant.</Say>
-  <Connect><Stream url="${wssBase}/media-stream" /></Connect>
+  <Connect><Stream url="wss://auntie-backend.onrender.com/media-stream" /></Connect>
 </Response>`;
   reply.type('text/xml').send(twiml);
 });
+console.log('[Twilio] Stream URL:', 'wss://auntie-backend.onrender.com/media-stream');
+
 
 // Media Stream bridge
 app.get('/media-stream', { websocket: true }, (ws /* WebSocket */) => {
