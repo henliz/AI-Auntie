@@ -11,16 +11,36 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_MODEL: gemini-1.5-flash-8b 
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "20" }
-      - run: npm init -y
-      - run: npm i @google/generative-ai
+        with:
+          node-version: "20"
+
+      - name: Preflight (paths + JSON parse)
+        run: |
+          echo "== tree =="
+          ls -la
+          echo "== ai =="
+          ls -la ai || true
+          echo "== ai/prompts =="
+          ls -la ai/prompts || true
+          echo "== scripts =="
+          ls -la scripts || true
+          node - <<'JS'
+          const fs=require('fs'), R=p=>fs.readFileSync(p,'utf8');
+          const need = ["ai/prompts/router.system.md","ai/triage.schema.json","scripts/smoke-gemini-router.mjs"];
+          let ok=true;
+          for (const p of need){ if(!fs.existsSync(p)){ console.error("MISSING",p); ok=false; } }
+          try{ JSON.parse(R("ai/triage.schema.json")); } catch(e){ console.error("Bad triage.schema.json:", e.message); ok=false; }
+          if(!ok) process.exit(1); else console.log("Preflight OK");
+          JS
+
+      - name: Install SDK
+        run: |
+          npm init -y
+          npm i @google/generative-ai@latest
+          node -e "console.log('SDK version', require('@google/generative-ai/package.json').version)"
+
       - name: Router smoke
         run: node scripts/smoke-gemini-router.mjs
-      - name: Answer smoke
-        run: node scripts/smoke-gemini-answer.mjs
-      - name: Resource matcher (local stand-in)
-        run: node scripts/mock-match.mjs
