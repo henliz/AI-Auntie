@@ -1,4 +1,6 @@
-// server.js — SMS + Voice (Twilio Media Streams ⇄ OpenAI Realtime; μ-law passthrough)
+// server.js — SMS + Voice (Twilio Media Streams ⇄ OpenAI Realtime)
+// npm i express twilio ws dotenv
+
 require('dotenv').config();
 
 const express = require('express');
@@ -6,23 +8,33 @@ const twilio = require('twilio');
 const http = require('http');
 const WebSocket = require('ws');
 
-// ---- your modules (can be stubs for now)
-const { formatReply } = require('./composer');
-const ai = require('./ai');
-const sf = require('./snowflake');
-const db = require('./mongo');
+// ---- optional local modules (keep your stubs/real impls) ----
+let formatReply, ai, sf, db;
+try { ({ formatReply } = require('./composer')); } catch { formatReply = ({ bodyText }) => bodyText; }
+try { ai = require('./ai'); } catch { ai = { getAuntieReply: async ({ text }) => ({ intent: 'COMFORT', topic: 'general', region: 'demo', reply_text: `Auntie here: ${text}` }) }; }
+try { sf = require('./snowflake'); } catch { sf = { lookupResources: async () => [] }; }
+try { db = require('./mongo'); } catch { db = { getContext: async () => ({}), saveMessage: async () => {} }; }
+
+// ---- sanity envs ----
+const PORT = process.env.PORT || 3000;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+if (!OPENAI_API_KEY) {
+  console.error('Missing OPENAI_API_KEY in env');
+  process.exit(1);
+}
 
 const app = express();
-app.use(express.urlencoded({ extended: false })); // Twilio sends form-encoded
+app.use(express.urlencoded({ extended: false })); // Twilio form-encoded posts
 
 // ---------- health ----------
 app.get('/health', (_req, res) => res.send('ok'));
 app.get('/', (_req, res) => res.send('AI Auntie backend is up 🌸'));
 
-// ---------- SMS webhook ----------
+// ---------- SMS Webhook ----------
 app.all('/twilio/sms', async (req, res) => {
   const from = req.body.From || '';
   const body = (req.body.Body || '').trim();
+
   try {
     const context = await db.getContext(from);
     const { intent, topic, region, reply_text } =
@@ -32,7 +44,6 @@ app.all('/twilio/sms', async (req, res) => {
     if (intent === 'RESOURCE' || intent === 'ESCALATE') {
       resources = await sf.lookupResources({ topic, region });
     }
-
     await db.saveMessage({ phone: from, intent, topic, message: body });
 
     const twiml = new twilio.twiml.MessagingResponse();
@@ -45,20 +56,21 @@ app.all('/twilio/sms', async (req, res) => {
   }
 });
 
-// ---------- Voice (Realtime) ----------
+// ---------- Voice: TwiML that connects Media Stream ----------
 function wsStreamUrl(req) {
+  // Prefer Render’s public URL if provided
   const base = process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`;
-  return base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/twilio-media';
+  const wssBase = base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
+  return `${wssBase}/twilio-media`;
 }
 
-// Voice webhook → returns TwiML that opens a Media Stream WS to us
+// Twilio “A CALL COMES IN” should point to this route
 app.all('/twilio/voice-rt', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
+  // Optional: a super short prompt so callers aren’t confused before the stream starts
+  // twiml.say({ voice: 'Google.en-US-Neural2-C' }, 'Connecting you to Auntie.');
   const connect = twiml.connect();
-  connect.stream({
-    url: wsStreamUrl(req),
-    track: 'inbound_audio' // explicit; Twilio will stream caller audio to our WS
-  });
+  connect.stream({ url: wsStreamUrl(req) });
   return res.type('text/xml').send(twiml.toString());
 });
 
@@ -67,7 +79,8 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ noServer: true });
 
 server.on('upgrade', (request, socket, head) => {
-  if ((request.url || '').startsWith('/twilio-media')) {
+  const url = request.url || '';
+  if (url.startsWith('/twilio-media')) {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
     });
@@ -76,103 +89,98 @@ server.on('upgrade', (request, socket, head) => {
   }
 });
 
-// ---------- Twilio ⇄ OpenAI Realtime bridge ----------
-wss.on('connection', (ws) => {
-  let streamSid = 'unknown';
-  let callSid = 'unknown';
-  let oaReady = false;
-  let sessionUpdated = false;
-  let greeted = false;
-  let mediaCount = 0;
-  let keepAlive;
-
+// ---------- WS bridge: Twilio ⇄ OpenAI Realtime ----------
+wss.on('connection', (ws, request) => {
   console.log('///////////////////////////////////////////////////////////');
   console.log('[WS] Twilio media stream connected');
 
-  const MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview'; // try 'gpt-realtime' if needed
+  let streamSid = null;
+  let callSid = null;
+
+  // Connect to OpenAI Realtime with proper subprotocol + header
+  const oaHeaders = {
+    Authorization: `Bearer ${OPENAI_API_KEY}`,
+    'OpenAI-Beta': 'realtime=v1',
+  };
+
+  const model = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview';
+
   const oa = new WebSocket(
-    `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(MODEL)}`,
-    'realtime', // << important: Realtime WS subprotocol
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        'OpenAI-Beta': 'realtime=v1',
-      },
-    }
+    `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`,
+    'realtime',                             // ← subprotocol (required)
+    { headers: oaHeaders }                  // ← header (required)
   );
 
-  oa.on('open', () => {
-    oaReady = true;
-    console.log('[OA] open');
+  let oaOpen = false;
 
-    // Configure session: μ-law in/out, server VAD, voice, persona
+  // Configure the session for μ-law both ways so we can passthrough
+  oa.on('open', () => {
+    oaOpen = true;
+    console.log('[OA] open');
     oa.send(JSON.stringify({
       type: 'session.update',
       session: {
         type: 'realtime',
-        model: MODEL,
-        instructions:
-          "You are Auntie, a warm, evidence-based postpartum support voice. " +
-          "Be brief, kind, and practical. Offer one clear tip and a gentle check-in. " +
-          "Avoid diagnosis; encourage seeking in-person care when appropriate.",
+        model,
         output_modalities: ['audio'],
         audio: {
-          input:  { format: { type: 'audio/pcmu' }, turn_detection: { type: 'server_vad' } },
-          output: { format: { type: 'audio/pcmu' }, voice: process.env.OPENAI_VOICE || 'alloy' }
-        }
+          input: {
+            format: { type: 'audio/pcmu' },          // Twilio G.711 μ-law
+            turn_detection: { type: 'server_vad' }   // let OA detect turns
+          },
+          output: {
+            format: { type: 'audio/pcmu' },          // send back μ-law
+            voice: process.env.OA_VOICE || 'aria'    // alloy|aria|verse|serene…
+          }
+        },
+        instructions:
+          "You are Auntie: warm, concise, evidence-based postpartum support. " +
+          "Keep answers short and practical for a phone call. If pain is severe, " +
+          "bleeding heavy, or self-harm is mentioned, calmly recommend urgent care."
       }
     }));
 
-    // keep the socket alive
-    keepAlive = setInterval(() => { try { oa.ping(); } catch {} }, 10000);
-  });
-
-  oa.on('unexpected-response', (req, res) => {
-    console.log('[OA] unexpected-response', res.statusCode, res.statusMessage);
-    res.on('data', d => console.log('[OA] body', d.toString()));
+    // (Optional) Have Auntie speak first so you hear something immediately
+    oa.send(JSON.stringify({
+      type: 'response.create',
+      response: {
+        modalities: ['audio'],
+        instructions: "Hi love, I’m Auntie. I’m listening—tell me what you need."
+      }
+    }));
   });
 
   oa.on('message', (data) => {
-    let evt;
-    try { evt = JSON.parse(data.toString()); } catch { return; }
-
-    if (evt.type === 'session.updated') {
-      sessionUpdated = true;
-      console.log('[OA] session.updated');
-      if (streamSid && !greeted) {
-        greeted = true;
-        oa.send(JSON.stringify({
-          type: 'response.create',
-          response: {
-            modalities: ['audio'],
-            instructions: "Hi love, I’m Auntie. I’m listening."
-          }
+    // OpenAI sends JSON control events and base64 audio deltas
+    try {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === 'session.updated') {
+        console.log('[OA] session.updated');
+      }
+      // Realtime API commonly uses .delta for μ-law audio chunks
+      if (msg.type === 'response.output_audio.delta' && msg.delta) {
+        if (!streamSid) return; // not yet started
+        ws.send(JSON.stringify({
+          event: 'media',
+          streamSid,
+          media: { payload: msg.delta }   // passthrough μ-law base64
         }));
       }
-    }
-
-    if (evt.type === 'rate_limits.updated') {
-      console.log('[OA] rate_limits', JSON.stringify(evt.rate_limits || {}));
-    }
-
-    // OA → Twilio (audio deltas)
-    if (evt.type === 'response.output_audio.delta' && evt.delta && streamSid) {
-      ws.send(JSON.stringify({
-        event: 'media',
-        streamSid,
-        media: { payload: evt.delta } // base64 μ-law (8kHz)
-      }));
-    }
-
-    if (evt.type === 'response.completed' && streamSid) {
-      ws.send(JSON.stringify({ event: 'mark', streamSid, mark: { name: 'auntie-turn-end' } }));
+      if (msg.type === 'response.completed') {
+        // mark the end of a response if you like
+      }
+    } catch {
+      // Non-JSON frames can be ignored for this demo
     }
   });
 
+  oa.on('close', () => console.log('[OA] closed'));
   oa.on('error', (e) => console.log('[OA] error', e?.message));
-  oa.on('close', () => { clearInterval(keepAlive); console.log('[OA] closed'); });
 
-  // Twilio → OA
+  // Accumulate caller audio briefly, then commit to OA (snappy turn-taking)
+  let frameCount = 0;
+  const FRAMES_PER_COMMIT = 25; // ~500ms (Twilio frames are ~20ms)
+
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
@@ -180,28 +188,39 @@ wss.on('connection', (ws) => {
     switch (msg.event) {
       case 'start':
         streamSid = msg.start?.streamSid || streamSid;
-        callSid   = msg.start?.callSid   || callSid;
+        callSid = msg.start?.callSid || callSid;
         console.log(`[WS] start: callSid=${callSid} streamSid=${streamSid}`);
-        if (oaReady && !greeted && sessionUpdated) {
-          greeted = true;
-          oa.send(JSON.stringify({
-            type: 'response.create',
-            response: { modalities: ['audio'], instructions: "Hi love, I’m Auntie. I’m listening." }
-          }));
-        }
         break;
 
       case 'media':
-        mediaCount++;
-        if (mediaCount % 50 === 0) console.log(`[WS] media frames: ${mediaCount}`);
-        if (oaReady && msg.media?.payload) {
-          oa.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: msg.media.payload }));
+        // Forward μ-law base64 directly to OA buffer
+        if (oaOpen && oa.readyState === WebSocket.OPEN) {
+          oa.send(JSON.stringify({
+            type: 'input_audio_buffer.append',
+            audio: msg.media.payload
+          }));
+          frameCount++;
+          if (frameCount % FRAMES_PER_COMMIT === 0) {
+            oa.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+            oa.send(JSON.stringify({
+              type: 'response.create',
+              response: { modalities: ['audio'] }
+            }));
+          }
         }
         break;
 
+      case 'mark':
+        // can be used to know when a chunk fully played
+        break;
+
       case 'stop':
-        console.log(`[WS] stop: callSid=${callSid}, totalFrames=${mediaCount}`);
+        console.log(`[WS] stop: callSid=${callSid}`);
         try { oa.close(); } catch {}
+        break;
+
+      default:
+        // keep-alives, etc.
         break;
     }
   });
@@ -213,7 +232,8 @@ wss.on('connection', (ws) => {
 });
 
 // ---------- start ----------
-const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Auntie on :${PORT} (WS at /twilio-media)`);
+  console.log(`Auntie listening on :${PORT}`);
+  console.log(`Voice TwiML route:   POST https://<host>/twilio/voice-rt`);
+  console.log(`Media Stream route:  wss://<host>/twilio-media`);
 });
