@@ -15,7 +15,7 @@ const apiKey = process.env.GEMINI_API_KEY || "";
 if (!apiKey) { console.error("Missing GEMINI_API_KEY"); process.exit(1); }
 
 const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro", systemInstruction });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-001", systemInstruction });
 
 const res = await model.generateContent({
   contents: [{ role: "user", parts: [{ text:
