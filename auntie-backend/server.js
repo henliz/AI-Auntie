@@ -45,6 +45,11 @@ fastify.get('/', async (request, reply) => {
     reply.send({ message: 'Twilio Media Stream Server is running!' });
 });
 
+// Health check (for Render)
+fastify.get('/health', async (_req, reply) => {
+  reply.code(200).type('text/plain').send('OK');
+});
+
 // Route for Twilio to handle incoming calls
 // <Say> punctuation to improve text-to-speech translation
 fastify.all('/incoming-call', async (request, reply) => {
@@ -57,6 +62,7 @@ fastify.all('/incoming-call', async (request, reply) => {
                                   <Stream url="wss://auntie-backend.onrender.com/media-stream" />
                               </Connect>
                           </Response>`;
+    console.log('[Twilio] Stream URL: wss://auntie-backend.onrender.com/media-stream');
 
     reply.type('text/xml').send(twimlResponse);
 });
@@ -286,10 +292,11 @@ fastify.register(async (fastify) => {
     });
 });
 
-fastify.listen({ port: PORT }, (err) => {
-    if (err) {
-        console.error(err);
-        process.exit(1);
-    }
-    console.log(`Server is listening on port ${PORT}`);
+const listenPort = Number(process.env.PORT) || Number(PORT) || 10000;
+fastify.listen({ port: listenPort, host: '0.0.0.0' }, (err, address) => {
+  if (err) {
+    console.error(err);
+    process.exit(1);
+  }
+  console.log(`Server listening on ${address}`);
 });
