@@ -1,0 +1,42 @@
+name: Validate AI Core
+on:
+  push:
+    branches: ["2-gemini"]
+  pull_request:
+    branches: ["main"]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Parse core files
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const read = p => fs.readFileSync(p,'utf8');
+          function ok(x){ console.log('✓',x); }
+          function bad(x,e){ console.error('✗',x,'—',e.message); process.exit(1); }
+
+          try { JSON.parse(read('ai/triage.schema.json')); ok('triage.schema.json parses'); }
+          catch(e){ bad('triage.schema.json', e); }
+
+          try { JSON.parse(read('ai/redflags.json')); ok('redflags.json parses'); }
+          catch(e){ bad('redflags.json', e); }
+
+          try {
+            const few = read('ai/triage.fewshots.jsonl').trim().split('\n').map(l=>JSON.parse(l));
+            if (!few.length) throw new Error('no few-shots');
+            ok(`triage.fewshots.jsonl parses (${few.length})`);
+          } catch(e){ bad('triage.fewshots.jsonl', e); }
+
+          try {
+            const facts = read('ai/facts.jsonl').trim().split('\n').map(l=>JSON.parse(l));
+            if (!facts.every(f=>f.id && f.snippet)) throw new Error('facts missing id/snippet');
+            ok(`facts.jsonl parses (${facts.length})`);
+          } catch(e){ bad('facts.jsonl', e); }
+
+          if (!fs.existsSync('ai/demoscripts.md')) { throw new Error('demoscripts.md missing'); }
+          ok('demoscripts.md present');
+          JS

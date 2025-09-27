@@ -1,0 +1,14 @@
+{
+  "name": "decide_route",
+  "description": "Classify message intent and extract safety info for Auntie.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "intent": { "type": "string", "enum": ["COMFORT", "RESOURCE", "ESCALATE"] },
+      "topic": { "type": "string", "description": "sleep, latch, pain, bleeding, mood, incision, breast, baby, other" },
+      "red_flags": { "type": "array", "items": { "type": "string" } },
+      "region_hint": { "type": "string", "description": "Optional region code like CA-ON or US-CA" }
+    },
+    "required": ["intent", "topic", "red_flags"]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "bleeding": ["soaking a pad in an hour", "large clots", "much heavier bleeding", "dizzy", "faint", "passing clots"],
+  "fever_infection": ["fever 38", "100.4", "chills", "foul smell", "spreading redness", "pus"],
+  "breast_mastitis": ["breast hot", "breast painful", "hard area", "fever", "chills"],
+  "cardio_neuro": ["chest pain", "shortness of breath", "severe headache", "vision changes", "blurry vision"],
+  "incision": ["incision opening", "wound opened", "red streaks", "pus", "drainage with odor"],
+  "baby_under_3m": ["baby fever", "lethargic", "not feeding", "no wet diapers", "dehydrated"],
+  "mental_health": ["hurt myself", "self-harm", "not safe", "suicidal", "want to disappear"],
+  "dehydration": ["can’t keep fluids down", "very dehydrated"]
+}
