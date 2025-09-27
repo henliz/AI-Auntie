@@ -49,7 +49,7 @@ fastify.all('/incoming-call', async (request, reply) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Google.en-US-Chirp3-HD-Aoede">Connecting you to the A. I. voice assistant.</Say>
-  <Connect><Stream url="wss://YOUR-RENDER-DOMAIN/media-stream" /></Connect>
+  <Connect><Stream url="wss://auntie-backend.onrender.com/media-stream" /></Connect>
 </Response>`;
 
   reply.type('text/xml').send(twiml);
