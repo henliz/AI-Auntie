@@ -4,7 +4,9 @@
   "type": "module",
   "description": "",
   "main": "index.js",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js"
@@ -13,12 +15,12 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@fastify/formbody": "^7.4.0",
+    "@fastify/websocket": "^10.0.1",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
+    "fastify": "^4.29.1",
     "twilio": "^5.10.1",
-    "ws": "^8.18.3",
-    "fastify": "^4.28.0",
-    "@fastify/websocket": "^10.0.0",
-    "@fastify/formbody": "^7.0.0"
+    "ws": "^8.18.3"
   }
 }
