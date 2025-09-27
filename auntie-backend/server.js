@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const twilio = require('twilio');
+const { formatReply } = require('./composer');
+
 
 const app = express();
 app.use(express.urlencoded({ extended: false })); // Twilio posts form-encoded
@@ -11,13 +13,17 @@ app.get('/health', (_req, res) => res.send('ok'));
 // SMS webhook — returns TwiML with a hard-coded reply
 app.post('/twilio/sms', (req, res) => {
   const body = (req.body.Body || '').trim();
-  const reply =
-    "AI Auntie here 🌸 I'm booting up.\n" +
-    "Thanks for texting: “" + body.slice(0, 120) + "”.\n" +
-    "Try me again soon! Reply STOP to opt out.";
+  const reply_text =
+  "You’ve got this. Try 20 minutes of skin-to-skin and sip some water—small resets help both you and baby tonight.";
+
+  const resources = [
+    { name: 'PSI Helpline', phone: '1-800-944-4773', url: 'https://postpartum.net' },
+    { name: 'Public Health Nurse (Waterloo)', phone: '519-575-4400', url: 'https://www.regionofwaterloo.ca' }
+  ];
 
   const twiml = new twilio.twiml.MessagingResponse();
-  twiml.message(reply);
+  twiml.message( formatReply({ bodyText: reply_text, resources }) );
+  return res.type('text/xml').send(twiml.toString());
 
   res.type('text/xml').send(twiml.toString()); // Twilio expects XML
 });
