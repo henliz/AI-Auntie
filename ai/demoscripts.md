@@ -2,7 +2,7 @@
 
 > Consent opener (first contact only):  
 > **Auntie:** “I’m an AI support line, not a clinician. I’ll share general info and when to seek care. Okay to continue?”
-
+ 
 ---
 
 ## 1) Sleep panic — COMFORT

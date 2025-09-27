@@ -15,22 +15,16 @@ const apiKey = process.env.GEMINI_API_KEY || "";
 if (!apiKey) { console.error("Missing GEMINI_API_KEY"); process.exit(1); }
 
 const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({
-  model: "gemini-1.5-pro",
-  systemInstruction
-});
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro", systemInstruction });
 
 const res = await model.generateContent({
-  contents: [{
-    role: "user",
-    parts: [{ text:
+  contents: [{ role: "user", parts: [{ text:
 `Channel=${payload.channel}
 Route=${payload.route}
 User="${payload.user}"
 Profile=${JSON.stringify(payload.profile)}
 Facts:
-- ${payload.facts.join("\n- ")}` }]
-  }]
+- ${payload.facts.join("\n- ")}` }]}]
 });
 
 const text = res.response.text();

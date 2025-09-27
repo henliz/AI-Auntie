@@ -1,0 +1,25 @@
+name: Gemini Smokes
+on:
+  push:
+    branches: ["2-gemini"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm init -y
+      - run: npm i @google/generative-ai
+      - name: Router smoke
+        run: node scripts/smoke-gemini-router.mjs
+      - name: Answer smoke
+        run: node scripts/smoke-gemini-answer.mjs
+      - name: Resource matcher (local stand-in)
+        run: node scripts/mock-match.mjs
