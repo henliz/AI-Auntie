@@ -35,7 +35,16 @@ fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
 // Health
-fastify.get('/Health', async (_req, reply) => reply.send({ ok: true }));
+// Log requests so you can SEE the health probe hitting you
+fastify.addHook('onRequest', (req, _reply, done) => {
+  console.log(`[REQ] ${req.method} ${req.url}`);
+  done();
+});
+
+// Health check: super fast, always-200
+fastify.get('/health', async (_req, reply) => {
+  reply.code(200).type('text/plain').send('OK');
+});
 
 // Twilio webhook → returns TwiML that connects Media Stream to /media-stream
 fastify.all('/incoming-call', async (request, reply) => {
