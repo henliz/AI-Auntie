@@ -42,13 +42,21 @@ fastify.get('/', async (_req, reply) => reply.send({ ok: true }));
 // Twilio webhook → TwiML that streams to /media-stream
 // REPLACE your /incoming-call route with this (Render friendly)
 fastify.all('/incoming-call', async (request, reply) => {
-  // Use your public Render URL, e.g. https://auntie-voice.onrender.com
-  // We force it to wss:// for Twilio Media Streams
-  const baseHttps =
-    process.env.PUBLIC_BASE_URL   // set this in Render to your https URL
-      ? process.env.PUBLIC_BASE_URL.replace(/^ws:/, 'https:').replace(/^wss:/, 'https:')
-      : `https://${request.headers.host}`; // fallback: Render's host header
-  const wss = baseHttps.replace(/^http:/, 'https:').replace(/^https:/, 'wss:');
+  // prefer your Render public URL if provided
+  const rawBase =
+    process.env.PUBLIC_BASE_URL    // e.g. https://auntie-backend.onrender.com
+      ? process.env.PUBLIC_BASE_URL
+      : `https://${request.headers.host}`;
+
+  // 1) strip any trailing slashes
+  const baseNoSlash = rawBase.replace(/\/+$/, '');
+
+  // 2) force secure scheme for Twilio Media Streams
+  const wss = baseNoSlash
+    .replace(/^ws:/, 'https:')
+    .replace(/^wss:/, 'https:')
+    .replace(/^http:/, 'https:')
+    .replace(/^https:/, 'wss:');
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -60,6 +68,7 @@ fastify.all('/incoming-call', async (request, reply) => {
 
   reply.type('text/xml').send(twiml);
 });
+
 
 // Media Stream WS — bridge Twilio <-> OpenAI Realtime
 fastify.get('/media-stream', { websocket: true }, (connection /* ws */) => {
