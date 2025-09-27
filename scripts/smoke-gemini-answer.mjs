@@ -15,15 +15,12 @@ const payload = {
 const apiKey = process.env.GEMINI_API_KEY || "";
 if (!apiKey) { console.error("Missing GEMINI_API_KEY"); process.exit(1); }
 
-// Use pro if available, else fall back to flash-8b
-const candidates = ["gemini-1.5-pro-001","gemini-1.5-flash-8b"];
+// Use safe model for your project
+const modelName = "gemini-1.5-flash-8b";
+console.log("ANSWER_MODEL:", modelName);
+
 const genAI = new GoogleGenerativeAI(apiKey);
-let model;
-for (const name of candidates) {
-  try { model = genAI.getGenerativeModel({ model: name, systemInstruction }); console.log("ANSWER_MODEL:", name); break; }
-  catch {}
-}
-if (!model) { console.error("No suitable model available"); process.exit(1); }
+const model = genAI.getGenerativeModel({ model: modelName, systemInstruction });
 
 const res = await model.generateContent({
   contents: [{
@@ -36,7 +33,7 @@ Profile=${JSON.stringify(payload.profile)}
 Facts:
 - ${payload.facts.join("\n- ")}
 
-Format for SMS: 2–4 sentences + up to 3 bullets. End with “Want me to text …?”` }]
+Format for SMS: 2–4 short sentences + up to 3 bullets. End with “Want me to text this?”` }]
   }]
 });
 
