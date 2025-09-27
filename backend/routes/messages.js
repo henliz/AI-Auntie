@@ -4,26 +4,26 @@ import { getDb } from "../mongo/mongoClient.js";
 
 const router = express.Router();
 
-// POST /messages → saves a message
+// POST /api/messages
 router.post("/", async (req, res) => {
   try {
     const db = getDb();
     const now = new Date();
 
     const messageDoc = {
-      session_id: req.body.session_id,
-      sender: req.body.sender,   // "user" or "auntie"
-      text: req.body.text,
-      topic: req.body.topic,
-      intent: req.body.intent,
+      session_id: req.body.session_id ?? "demo-session-1",
+      sender: req.body.sender ?? "user",
+      text: req.body.text ?? "",
+      topic: req.body.topic ?? null,
+      intent: req.body.intent ?? null,
       created_at: now,
     };
 
-    await db.collection("messages").insertOne(messageDoc);
-    res.json({ success: true, message: "Message saved", data: messageDoc });
+    const { insertedId } = await db.collection("messages").insertOne(messageDoc);
+    res.json({ ok: true, id: insertedId });
   } catch (err) {
     console.error("Error saving message:", err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ ok: false, error: "db_insert_failed" });
   }
 });
 
