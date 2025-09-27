@@ -17,17 +17,25 @@ jobs:
         with:
           node-version: "20"
 
+      # Quick sanity: required files + JSON parse
       - name: Preflight (paths + JSON parse)
         run: |
           node - <<'JS'
           const fs=require('fs'), R=p=>fs.readFileSync(p,'utf8');
-          const need = ["ai/prompts/router.system.md","ai/triage.schema.json","scripts/smoke-gemini-router.mjs"];
-          for (const p of need) if(!fs.existsSync(p)) { console.error("MISSING",p); process.exit(1); }
-          try{ JSON.parse(R("ai/triage.schema.json")); }catch(e){ console.error("Bad triage.schema.json:", e.message); process.exit(1); }
-          console.log("Preflight OK");
+          const need=[
+            "ai/prompts/router.system.md",
+            "ai/prompts/answer.system.md",
+            "ai/triage.schema.json",
+            "ai/facts.jsonl",
+            "scripts/smoke-gemini-router.mjs",
+            "scripts/smoke-gemini-answer.mjs"
+          ];
+          let ok=true; for (const p of need){ if(!fs.existsSync(p)){ console.error("MISSING",p); ok=false; } }
+          try{ JSON.parse(R("ai/triage.schema.json")); }catch(e){ console.error("Bad triage.schema.json:", e.message); ok=false; }
+          if(!ok) process.exit(1); else console.log("Preflight OK");
           JS
 
-      - name: Install SDK
+      - name: Install Gemini SDK
         run: |
           npm init -y
           npm i @google/generative-ai@latest
@@ -35,3 +43,6 @@ jobs:
 
       - name: Router smoke
         run: node scripts/smoke-gemini-router.mjs
+
+      - name: Answer smoke
+        run: node scripts/smoke-gemini-answer.mjs
