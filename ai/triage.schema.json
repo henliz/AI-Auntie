@@ -1,14 +1,14 @@
 {
-  "name": "decide_route",
-  "description": "Classify message intent and extract safety info for Auntie.",
+  "name": "triage",
+  "description": "Classify a postpartum message",
   "parameters": {
     "type": "object",
     "properties": {
-      "intent": { "type": "string", "enum": ["COMFORT", "RESOURCE", "ESCALATE"] },
-      "topic": { "type": "string", "description": "sleep, latch, pain, bleeding, mood, incision, breast, baby, other" },
+      "intent": { "type": "string", "enum": ["COMFORT","RESOURCE","ESCALATE"] },
+      "topic":  { "type": "string", "enum": ["sleep","latch","pain","bleeding","mood","incision","breast","baby","other"] },
       "red_flags": { "type": "array", "items": { "type": "string" } },
-      "region_hint": { "type": "string", "description": "Optional region code like CA-ON or US-CA" }
+      "confidence": { "type": "number" }
     },
-    "required": ["intent", "topic", "red_flags"]
+    "required": ["intent","topic","red_flags","confidence"]
   }
 }
