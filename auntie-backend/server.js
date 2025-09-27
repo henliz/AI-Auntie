@@ -135,7 +135,7 @@ wss.on('connection', (ws, request) => {
     } catch {
       return;
     }
-    if (msg.type === 'response.output_audio.delta' && msg.delta && streamSid) {
+    if (msg.type === 'session.updated') {\n      console.log('[OpenAI] session.updated ok');\n    }\n\n    if (msg.type === 'response.output_audio.delta' && msg.delta && streamSid) {
       ws.send(
         JSON.stringify({
           event: 'media',
