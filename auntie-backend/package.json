@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
   },
   "engines": {
     "node": ">=22 <23"
@@ -11,6 +11,7 @@
   "dependencies": {
     "fastify": "^4.28.1",
     "@fastify/websocket": "8.3.1",
+    "@fastify/formbody": "^8.3.0",
     "ws": "^8.18.0",
     "dotenv": "^16.4.5"
   }
