@@ -1,4 +1,5 @@
 // server.js — SMS + Voice (Twilio Media Streams + OpenAI Realtime)
+// Requires: npm i ws
 require('dotenv').config();
 
 const express = require('express');
@@ -6,14 +7,14 @@ const twilio = require('twilio');
 const http = require('http');
 const WebSocket = require('ws');
 
-// Your local modules (stubs or real)
+// Your local modules (keep your stubs/real impls)
 const { formatReply } = require('./composer');
 const ai = require('./ai');
 const sf = require('./snowflake');
 const db = require('./mongo');
 
 const app = express();
-app.use(express.urlencoded({ extended: false })); // Twilio form-encoded webhooks
+app.use(express.urlencoded({ extended: false })); // Twilio posts form-encoded
 
 // ---------- Basic routes ----------
 app.get('/health', (_req, res) => res.send('ok'));
@@ -45,7 +46,7 @@ app.all('/twilio/sms', async (req, res) => {
   }
 });
 
-// ---------- Voice (Media Stream entry) ----------
+// ---------- Voice (Media Stream entry; NO Polly greeting) ----------
 function wsStreamUrl(req) {
   const base = process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`;
   return base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/twilio-media';
@@ -53,7 +54,6 @@ function wsStreamUrl(req) {
 
 app.all('/twilio/voice-rt', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say({ voice: 'Polly.Kendra' }, "Hi love, I’m Auntie. I’m listening now.");
   const connect = twiml.connect();
   // Bidirectional stream so we can send audio back to the caller
   connect.stream({ url: wsStreamUrl(req) });
@@ -75,7 +75,7 @@ server.on('upgrade', (request, socket, head) => {
   }
 });
 
-// ---------- WS bridge: Twilio ⇄ OpenAI Realtime ----------
+// ---------- WS bridge: Twilio ⇄ OpenAI Realtime (simple back-and-forth) ----------
 wss.on('connection', (ws, request) => {
   let frames = 0;
   let streamSid = 'unknown';
@@ -96,19 +96,26 @@ wss.on('connection', (ws, request) => {
   let oaReady = false;
   let pendingBatches = [];
 
-  // Ask OpenAI to output audio as PCM16 @ 16k and set persona
+  // Ask OpenAI to speak in a chosen voice and 16k PCM audio
   oa.on('open', () => {
     oaReady = true;
     oa.send(JSON.stringify({
       type: 'session.update',
-      session: { audio_format: { type: 'pcm16', sample_rate: 16000 } }
+      session: {
+        // pick a voice you like: aria, verse, serene, alloy
+        voice: 'aria',
+        audio_format: { type: 'pcm16', sample_rate: 16000 }
+      }
     }));
+    // Intro line from OA (no Polly at all)
     oa.send(JSON.stringify({
       type: 'response.create',
       response: {
-        instructions: "You are Auntie, a warm, evidence-based postpartum support voice. Keep responses brief, speak gently, and pause between ideas."
+        modalities: ['audio'],
+        instructions: "Hi love, I’m Auntie. I’m listening now."
       }
     }));
+    // Flush any early caller audio
     for (const b of pendingBatches) oa.send(b);
     pendingBatches = [];
   });
@@ -166,7 +173,7 @@ wss.on('connection', (ws, request) => {
     return out;
   }
 
-  // 3) OpenAI → Twilio (model audio back to caller)
+  // 3) OpenAI → Twilio (stream model audio back to caller)
   oa.on('message', (data) => {
     try {
       const evt = JSON.parse(data.toString());
@@ -182,17 +189,18 @@ wss.on('connection', (ws, request) => {
           media: { payload: ulawB64 }
         }));
       }
+      // You can also listen for 'response.completed' to mark turn end.
     } catch {
-      // ignore non-JSON frames
+      // sometimes OA sends binary frames; ignore non-JSON here
     }
   });
 
   oa.on('close', () => console.log('[OA] closed'));
   oa.on('error', (e) => console.log('[OA] error', e?.message));
 
-  // 4) Twilio → OpenAI (caller audio up)
+  // 4) Twilio → OpenAI (caller audio up) — simple chunked back-and-forth
   let inputBatch = [];
-  const FRAMES_PER_COMMIT = 50; // ~1s at ~20ms frames
+  const FRAMES_PER_COMMIT = 30; // ~600ms at ~20ms frames for snappier replies
 
   ws.on('message', (data) => {
     let msg;
@@ -207,10 +215,12 @@ wss.on('connection', (ws, request) => {
 
       case 'media':
         frames++;
+        // μ-law 8k -> PCM16 8k -> upsample to 16k
         const pcm8 = muLawDecode(msg.media.payload);
         const pcm16 = upsample8kTo16k(pcm8);
         inputBatch.push(Buffer.from(pcm16.buffer));
 
+        // Every ~0.6s, send batch to OA and ask for a spoken reply
         if (frames % FRAMES_PER_COMMIT === 0) {
           const joined = Buffer.concat(inputBatch);
           inputBatch = [];
@@ -223,7 +233,7 @@ wss.on('connection', (ws, request) => {
             oa.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
             oa.send(JSON.stringify({
               type: 'response.create',
-              response: { modalities: ['audio'], instructions: 'Keep it brief, warm, and practical.' }
+              response: { modalities: ['audio'], instructions: 'Answer briefly, warm and practical.' }
             }));
           } else {
             pendingBatches.push(appendMsg);
@@ -237,6 +247,7 @@ wss.on('connection', (ws, request) => {
         break;
 
       default:
+        // keep-alives, marks, etc.
         break;
     }
   });
