@@ -1,0 +1,14 @@
+{
+  "table": "resources",
+  "columns": [
+    { "name": "id", "type": "STRING" },
+    { "name": "country", "type": "STRING" },
+    { "name": "region", "type": "STRING" },
+    { "name": "topic", "type": "STRING" },
+    { "name": "name", "type": "STRING" },
+    { "name": "phone", "type": "STRING" },
+    { "name": "url", "type": "STRING" },
+    { "name": "trust_score", "type": "NUMBER" }
+  ],
+  "primary_key": ["id"]
+}

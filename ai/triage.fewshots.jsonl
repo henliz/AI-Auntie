@@ -1,0 +1,8 @@
+{"input":"Baby won’t latch for 10 minutes—normal?","output":{"intent":"RESOURCE","topic":"latch","red_flags":[]}}
+{"input":"I’m shivering and my breast is hot and painful; I think I have a fever.","output":{"intent":"ESCALATE","topic":"breast","red_flags":["fever/chills with breast pain"]}}
+{"input":"I cried twice today; I just need someone to say it’s okay.","output":{"intent":"COMFORT","topic":"mood","red_flags":[]}}
+{"input":"My bleeding just got much heavier and I feel dizzy.","output":{"intent":"ESCALATE","topic":"bleeding","red_flags":["sudden heavy bleeding","dizziness"]}}
+{"input":"I had a C-section and my incision hurts. Is that normal?","output":{"intent":"RESOURCE","topic":"incision","red_flags":[]}}
+{"input":"I haven’t slept more than an hour at a time and I’m crying. Am I failing?","output":{"intent":"COMFORT","topic":"sleep","red_flags":[]}}
+{"input":"I want to hurt myself.","output":{"intent":"ESCALATE","topic":"mood","red_flags":["self-harm risk"]}}
+{"input":"My chest feels tight and I’m short of breath.","output":{"intent":"ESCALATE","topic":"other","red_flags":["chest pain/shortness of breath"]}}

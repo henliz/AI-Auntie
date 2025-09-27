@@ -1,0 +1,38 @@
+{
+  "users": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "_id": { "description": "hashed phone or user id", "type": "string" },
+      "consent": { "type": "boolean" },
+      "region": { "type": "string" },
+      "delivery": { "type": "string", "enum": ["vaginal","c-section","unknown"] },
+      "feeding": { "type": "string", "enum": ["breast/chest","formula","combo","unknown"] },
+      "weeks_pp": { "type": "number" }
+    },
+    "required": ["_id","consent"]
+  },
+  "sessions": {
+    "type": "object",
+    "properties": {
+      "_id": { "type": "string" },
+      "user": { "type": "string" },
+      "channel": { "type": "string", "enum": ["SMS","VOICE"] },
+      "started_at": { "type": "string", "format": "date-time" }
+    },
+    "required": ["_id","user","channel","started_at"]
+  },
+  "messages": {
+    "type": "object",
+    "properties": {
+      "_id": { "type": "string" },
+      "session": { "type": "string" },
+      "role": { "type": "string", "enum": ["user","auntie"] },
+      "text": { "type": "string" },
+      "route": { "type": "string", "enum": ["COMFORT","RESOURCE","ESCALATE"] },
+      "red_flags": { "type": "array", "items": { "type": "string" } },
+      "created_at": { "type": "string", "format": "date-time" }
+    },
+    "required": ["_id","session","role","text","created_at"]
+  }
+}

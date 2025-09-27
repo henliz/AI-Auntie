@@ -1,0 +1,14 @@
+{
+  "name": "triage",
+  "description": "Classify a postpartum message",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "intent": { "type": "string", "enum": ["COMFORT","RESOURCE","ESCALATE"] },
+      "topic":  { "type": "string", "enum": ["sleep","latch","pain","bleeding","mood","incision","breast","baby","other"] },
+      "red_flags": { "type": "array", "items": { "type": "string" } },
+      "confidence": { "type": "number" }
+    },
+    "required": ["intent","topic","red_flags","confidence"]
+  }
+}
