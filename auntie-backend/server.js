@@ -100,16 +100,12 @@ wss.on('connection', (ws, request) => {
           type: 'realtime',
           model: MODEL,
           output_modalities: ['audio'],
+          // inside session.update
           audio: {
-            input: {
-              format: { type: 'audio/pcmu', sample_rate_hz: 8000 },
-              turn_detection: { type: 'server_vad' },
-            },
-            output: {
-              format: { type: 'audio/pcmu', sample_rate_hz: 8000 },
-              voice: VOICE,
-            },
+            input:  { format: { type: 'g711_ulaw', sample_rate_hz: 8000 }, turn_detection: { type: 'server_vad' } },
+            output: { format: { type: 'g711_ulaw', sample_rate_hz: 8000 }, voice: VOICE },
           },
+
           instructions: SYSTEM_MESSAGE,
         },
       })
@@ -129,25 +125,26 @@ wss.on('connection', (ws, request) => {
 
   // OA → Twilio
   oa.on('message', (buf) => {
-    let msg;
-    try {
-      msg = JSON.parse(buf.toString());
-    } catch {
-      return;
-    }
-    if (msg.type === 'session.updated') {\n      console.log('[OpenAI] session.updated ok');\n    }\n\n    if (msg.type === 'response.output_audio.delta' && msg.delta && streamSid) {
-      ws.send(
-        JSON.stringify({
+      let msg;
+      try { msg = JSON.parse(buf.toString()); } catch { return; }
+
+      if (msg.type === 'session.updated') {
+        console.log('[OpenAI] session.updated ok');
+      }
+
+      if (msg.type === 'response.output_audio.delta' && msg.delta && streamSid) {
+        ws.send(JSON.stringify({
           event: 'media',
           streamSid,
           media: { payload: msg.delta },
-        })
-      );
-    }
-    if (msg.type === 'error') {
-      console.error('[OpenAI] error event:', msg);
-    }
-  });
+        }));
+      }
+
+      if (msg.type === 'error') {
+        console.error('[OpenAI] error event:', msg);
+      }
+    });
+
 
   oa.on('close', () => console.log('[OpenAI] websocket closed'));
   oa.on('error', (e) => console.error('[OpenAI] websocket error:', e?.message || e));
@@ -181,17 +178,13 @@ wss.on('connection', (ws, request) => {
         );
 
         framesSinceCommit++;
+        // increment framesSinceCommit on each media frame
         if (framesSinceCommit >= FRAMES_BEFORE_COMMIT) {
-          // Ensure >= ~100ms audio in buffer before commit to avoid EMPTY errors
           oa.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-          oa.send(
-            JSON.stringify({
-              type: 'response.create',
-              response: { modalities: ['audio', 'text'] }, // include text
-            })
-          );
+          oa.send(JSON.stringify({ type: 'response.create', response: { modalities: ['audio','text'] } }));
           framesSinceCommit = 0;
         }
+
         break;
 
       case 'stop':
