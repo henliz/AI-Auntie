@@ -51,16 +51,20 @@ fastify.all('/incoming-call', async (request, reply) => {
     .replace(/^http:/, 'https:')
     .replace(/^https:/, 'wss:');
 
-  const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+// TwiML webhook — use same host for HTTPS and WSS
+app.all('/incoming-call', async (request, reply) => {
+  const base = (process.env.PUBLIC_BASE_URL || `https://${request.headers.host}`).replace(/\/+$/, '');
+  const wssBase = base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:'); // force WSS
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Google.en-US-Chirp3-HD-Aoede">Connecting you to Auntie, the A. I. voice assistant.</Say>
-  <Connect>
-    <Stream url="${wss}/media-stream" />
-  </Connect>
+  <Connect><Stream url="${wssBase}/media-stream" /></Connect>
 </Response>`;
 
   reply.type('text/xml').send(twimlResponse);
 });
+console.log('[Twilio] Stream URL:', 'wss://auntie-backend.onrender.com/media-stream');
+
 
 // WebSocket: Twilio Media Stream <-> OpenAI Realtime
 fastify.register(async (f) => {
