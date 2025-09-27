@@ -67,10 +67,10 @@ function wsStreamUrl(req) {
 // Twilio “A CALL COMES IN” should point to this route
 app.all('/twilio/voice-rt', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
-  // Optional: a super short prompt so callers aren’t confused before the stream starts
+  // Optional: super short prompt so callers hear *something* before the stream
   // twiml.say({ voice: 'Google.en-US-Neural2-C' }, 'Connecting you to Auntie.');
   const connect = twiml.connect();
-  connect.stream({ url: wsStreamUrl(req) });
+  connect.stream({ url: wsStreamUrl(req) }); // ⇐ YOUR WS route below
   return res.type('text/xml').send(twiml.toString());
 });
 
@@ -97,26 +97,25 @@ wss.on('connection', (ws, request) => {
   let streamSid = null;
   let callSid = null;
 
-  // Connect to OpenAI Realtime with proper subprotocol + header
+  // Correct OpenAI Realtime handshake: subprotocol + beta header
   const oaHeaders = {
     Authorization: `Bearer ${OPENAI_API_KEY}`,
     'OpenAI-Beta': 'realtime=v1',
   };
-
   const model = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview';
 
   const oa = new WebSocket(
     `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`,
-    'realtime',                             // ← subprotocol (required)
-    { headers: oaHeaders }                  // ← header (required)
+    'realtime',                 // ← REQUIRED subprotocol
+    { headers: oaHeaders }      // ← REQUIRED header
   );
 
   let oaOpen = false;
 
-  // Configure the session for μ-law both ways so we can passthrough
   oa.on('open', () => {
     oaOpen = true;
     console.log('[OA] open');
+    // Configure µ-law both directions (Twilio uses G.711 µ-law @8k)
     oa.send(JSON.stringify({
       type: 'session.update',
       session: {
@@ -125,12 +124,12 @@ wss.on('connection', (ws, request) => {
         output_modalities: ['audio'],
         audio: {
           input: {
-            format: { type: 'audio/pcmu' },          // Twilio G.711 μ-law
-            turn_detection: { type: 'server_vad' }   // let OA detect turns
+            format: { type: 'audio/pcmu' },
+            turn_detection: { type: 'server_vad' }
           },
           output: {
-            format: { type: 'audio/pcmu' },          // send back μ-law
-            voice: process.env.OA_VOICE || 'aria'    // alloy|aria|verse|serene…
+            format: { type: 'audio/pcmu' },
+            voice: process.env.OA_VOICE || 'aria'
           }
         },
         instructions:
@@ -140,7 +139,7 @@ wss.on('connection', (ws, request) => {
       }
     }));
 
-    // (Optional) Have Auntie speak first so you hear something immediately
+    // Optional: have Auntie speak first so you hear something immediately
     oa.send(JSON.stringify({
       type: 'response.create',
       response: {
@@ -150,36 +149,35 @@ wss.on('connection', (ws, request) => {
     }));
   });
 
+  // OpenAI → Twilio (stream OA audio back to caller)
   oa.on('message', (data) => {
-    // OpenAI sends JSON control events and base64 audio deltas
     try {
       const msg = JSON.parse(data.toString());
+
       if (msg.type === 'session.updated') {
         console.log('[OA] session.updated');
       }
-      // Realtime API commonly uses .delta for μ-law audio chunks
+
+      // OA sends µ-law base64 chunks here per the session config above
       if (msg.type === 'response.output_audio.delta' && msg.delta) {
-        if (!streamSid) return; // not yet started
+        if (!streamSid) return; // wait for Twilio start
         ws.send(JSON.stringify({
           event: 'media',
           streamSid,
-          media: { payload: msg.delta }   // passthrough μ-law base64
+          media: { payload: msg.delta }
         }));
       }
-      if (msg.type === 'response.completed') {
-        // mark the end of a response if you like
-      }
     } catch {
-      // Non-JSON frames can be ignored for this demo
+      // ignore non-JSON control frames
     }
   });
 
   oa.on('close', () => console.log('[OA] closed'));
   oa.on('error', (e) => console.log('[OA] error', e?.message));
 
-  // Accumulate caller audio briefly, then commit to OA (snappy turn-taking)
+  // Twilio → OpenAI (caller audio up). Commit often so the model speaks.
   let frameCount = 0;
-  const FRAMES_PER_COMMIT = 25; // ~500ms (Twilio frames are ~20ms)
+  const FRAMES_PER_COMMIT = 25; // ~500ms (Twilio frames ~20ms)
 
   ws.on('message', (raw) => {
     let msg;
@@ -193,25 +191,21 @@ wss.on('connection', (ws, request) => {
         break;
 
       case 'media':
-        // Forward μ-law base64 directly to OA buffer
         if (oaOpen && oa.readyState === WebSocket.OPEN) {
+          // Forward µ-law base64 directly to OA’s input buffer
           oa.send(JSON.stringify({
             type: 'input_audio_buffer.append',
             audio: msg.media.payload
           }));
           frameCount++;
           if (frameCount % FRAMES_PER_COMMIT === 0) {
-            oa.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+            oa.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));    // ← REQUIRED
             oa.send(JSON.stringify({
-              type: 'response.create',
+              type: 'response.create',                                         // ← REQUIRED
               response: { modalities: ['audio'] }
             }));
           }
         }
-        break;
-
-      case 'mark':
-        // can be used to know when a chunk fully played
         break;
 
       case 'stop':
@@ -220,7 +214,6 @@ wss.on('connection', (ws, request) => {
         break;
 
       default:
-        // keep-alives, etc.
         break;
     }
   });
