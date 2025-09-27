@@ -1,27 +1,60 @@
+// index.js
 import Fastify from 'fastify';
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
 import fastifyFormBody from '@fastify/formbody';
 import fastifyWs from '@fastify/websocket';
+import cors from '@fastify/cors';
 
-// Load environment variables
+// ✅ Gemini SDK (correct package + import)
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
 dotenv.config();
 
-// Env
-const { OPENAI_API_KEY, RENDER_DOMAIN, SELF_ORIGIN } = process.env;
+// -----------------------------
+// Env & constants
+// -----------------------------
+const { OPENAI_API_KEY } = process.env;
+
 if (!OPENAI_API_KEY) {
-  console.error('Missing OpenAI API key. Please set it in the .env file.');
+  console.error('Missing OpenAI API key. Please set OPENAI_API_KEY in .env');
   process.exit(1);
 }
 
-// Fastify
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+if (!GEMINI_API_KEY) {
+  console.error('Missing GEMINI_API_KEY in .env');
+  process.exit(1);
+}
+
+const VOICE = 'alloy';
+const TEMPERATURE = 0.8;
+const PORT = Number(process.env.PORT || 5050);
+
+// Resolve a public base URL for internal fetches (Render or local)
+function getExternalBase() {
+  return (
+    process.env.RENDER_EXTERNAL_URL ||
+    (process.env.RENDER_DOMAIN ? `https://${process.env.RENDER_DOMAIN}` : `http://localhost:${PORT}`)
+  );
+}
+
+// -----------------------------
+// Fastify setup
+// -----------------------------
 const fastify = Fastify();
+await fastify.register(cors, { origin: true });
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Constants
-const VOICE = 'alloy';
-const PORT = process.env.PORT || 5050;
+// -----------------------------
+// Base system message (for OpenAI Realtime)
+// -----------------------------
+const BASE_SYSTEM_MESSAGE =
+  'You are a helpful and bubbly AI assistant who loves to chat about anything the user is interested about and is prepared to offer them facts. You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. Always stay positive, but work in a joke when appropriate.';
+
+// Loggable event types (OpenAI Realtime)
 const LOG_EVENT_TYPES = [
   'error',
   'response.content.done',
@@ -31,68 +64,88 @@ const LOG_EVENT_TYPES = [
   'input_audio_buffer.speech_stopped',
   'input_audio_buffer.speech_started',
   'session.created',
-  'session.updated',
+  'session.updated'
 ];
+
 const SHOW_TIMING_MATH = false;
 
 // -----------------------------
-// Basic Routes
+// Basic routes
 // -----------------------------
-fastify.get('/', async (_request, reply) => {
-  reply.send({ message: 'Twilio Media Stream Server is running!' });
+fastify.get('/', async (_req, reply) => {
+  reply.send({ message: 'Twilio Media Stream Server is running!', provider: 'OpenAI Realtime + Gemini' });
 });
 
-// Twilio webhook that starts the call and opens a WS back to /media-stream
+// Twilio webhook → WS back to /media-stream
 fastify.all('/incoming-call', async (request, reply) => {
-  const streamHost = RENDER_DOMAIN || request.headers.host; // e.g., <app>.onrender.com
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>
-    Please hold on just a moment while we bring Auntie to the phone. She’s so excited to chat with you.
+  <Say voice="Google.en-US-Chirp3-HD-Aoede">
+    Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open A I Realtime API
   </Say>
   <Pause length="1"/>
-  <Say>Hey honey, what's going on?</Say>
+  <Say voice="Google.en-US-Chirp3-HD-Aoede">O.K. you can start talking!</Say>
   <Connect>
-    <Stream url="wss://${streamHost}/media-stream" />
+    <Stream url="wss://${request.headers.host}/media-stream" />
   </Connect>
 </Response>`;
   reply.type('text/xml').send(twimlResponse);
 });
 
 // -----------------------------
-// Gemini gateway (stub)
+// Gemini: client + route
 // -----------------------------
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const gemini = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+
+/**
+ * POST /gemini/query
+ * Body: { query: string, context?: object, json?: boolean }
+ * - If json=true we ask Gemini to respond as JSON (useful for triage/classification).
+ */
 fastify.post('/gemini/query', async (request, reply) => {
   try {
-    const { query, context = {} } = request.body || {};
+    const { query, context = {}, json = false } = request.body || {};
+    if (!query || typeof query !== 'string') {
+      return reply.code(400).send({ error: 'Missing "query" string in body.' });
+    }
 
-    // TODO: replace with your real Gemini+Snowflake call:
-    // const { answer, sources } = await callGemini({ query, context });
+    const res = await gemini.generateContent({
+      contents: [
+        // You can prepend a system-style hint here if you want stricter behavior.
+        { role: 'user', parts: [{ text: query }] }
+      ],
+      generationConfig: json ? { responseMimeType: 'application/json' } : undefined
+    });
 
-    const answer = `Stubbed Gemini answer for: "${query}"`;
-    const sources = ['snowflake:replace-me'];
-
+    const text = res?.response?.text?.() ?? '';
     return reply.send({
-      answer,
-      sources,
-      meta: { retrieved_at: new Date().toISOString(), context }
+      answer: text,
+      sources: [],
+      meta: { model: GEMINI_MODEL, retrieved_at: new Date().toISOString(), context }
     });
   } catch (e) {
     request.log.error(e);
-    return reply.code(500).send({ error: String(e) });
+    return reply.code(500).send({ error: 'gemini_request_failed', detail: String(e?.message || e) });
   }
 });
 
+// Quick in-browser tester
 fastify.get('/gemini/test', async (_req, reply) => {
   reply.type('text/html').send(`
 <!doctype html><meta charset="utf-8">
 <h1>Gemini Query Tester</h1>
-<input id="q" value="current average wait time?" style="width:400px"/>
+<input id="q" value="Say hi in a warm, auntie tone." style="width:400px"/>
+<label><input id="json" type="checkbox"> JSON mode</label>
 <button onclick="go()">Send</button>
 <pre id="out"></pre>
 <script>
 async function go(){
-  const r = await fetch('/gemini/query',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:document.getElementById('q').value})});
+  const r = await fetch('/gemini/query',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({query:document.getElementById('q').value, json:document.getElementById('json').checked})
+  });
   document.getElementById('out').textContent = JSON.stringify(await r.json(), null, 2);
 }
 </script>`);
@@ -100,73 +153,92 @@ async function go(){
 
 // -----------------------------
 // WebSocket: Twilio <-> OpenAI Realtime
-// Mode: Gemini-first (OpenAI = ASR+TTS only)
 // -----------------------------
 fastify.register(async (fastify) => {
   fastify.get('/media-stream', { websocket: true }, (connection, req) => {
     console.log('Client connected');
 
-    // Per-connection state
+    // Connection-specific state
     let streamSid = null;
     let latestMediaTimestamp = 0;
     let lastAssistantItem = null;
     let markQueue = [];
-    let responseInFlight = false;
-    let currentTranscript = '';
     let responseStartTimestampTwilio = null;
-
-    // OpenAI as TTS+ASR only
-    const TTS_SYSTEM = `
-You are a TTS renderer and transcriber.
-- DO NOT invent or paraphrase content.
-- When asked to speak, read the provided text VERBATIM.
-- When asked to transcribe, return ONLY the raw transcript text with no extra words.
-`.trim();
 
     // Connect to OpenAI Realtime WS
     const openAiWs = new WebSocket(
-      `wss://api.openai.com/v1/realtime?model=gpt-realtime&temperature=0`,
+      `wss://api.openai.com/v1/realtime?model=gpt-realtime&temperature=${TEMPERATURE}`,
       { headers: { Authorization: `Bearer ${OPENAI_API_KEY}` } }
     );
 
+    // Build a system message that nudges tool usage
+    const SYSTEM_MESSAGE = `
+${BASE_SYSTEM_MESSAGE}
+
+# Tool Use
+- When the caller asks for facts, metrics, schedules, or anything that may rely on organizational/internal data, CALL the function "queryGemini" with a concise question (and optional user context).
+- After the tool returns, summarize results conversationally for the caller. If sources are provided, refer to them in plain language (e.g., "from our records").
+- If the tool errors or times out, apologize briefly and suggest one actionable alternative, then continue the conversation.
+`.trim();
+
+    // Configure session
     const initializeSession = () => {
       const sessionUpdate = {
         type: 'session.update',
         session: {
           type: 'realtime',
           model: 'gpt-realtime',
-          output_modalities: ['audio','text'],
+          output_modalities: ['audio'],
           audio: {
             input: { format: { type: 'audio/pcmu' }, turn_detection: { type: 'server_vad' } },
             output: { format: { type: 'audio/pcmu' }, voice: VOICE }
           },
-          instructions: TTS_SYSTEM
-          // no tools — Gemini authors words via server
+          instructions: SYSTEM_MESSAGE,
+          tools: [
+            {
+              type: 'function',
+              name: 'queryGemini',
+              description:
+                'Query organization knowledge via Gemini (or general Q&A). Use for accurate, up-to-date internal/external data.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  query: { type: 'string', description: 'Natural-language question.' },
+                  user_context: {
+                    type: 'object',
+                    description: 'Optional caller/session metadata.',
+                    additionalProperties: true
+                  }
+                },
+                required: ['query']
+              }
+            }
+          ]
         }
       };
+
+      console.log('Sending session update:', JSON.stringify(sessionUpdate));
       openAiWs.send(JSON.stringify(sessionUpdate));
     };
 
-    // Helper: send "mark" packets to Twilio
-    const sendMark = () => {
-      if (!streamSid) return;
-      const markEvent = {
-        event: 'mark',
-        streamSid,
-        mark: { name: 'responsePart' }
-      };
-      connection.socket.send(JSON.stringify(markEvent));
-      markQueue.push('responsePart');
-    };
+    // Optional: have AI speak first
+    // const sendInitialConversationItem = () => {
+    //   const initialConversationItem = {
+    //     type: 'conversation.item.create',
+    //     item: {
+    //       type: 'message',
+    //       role: 'user',
+    //       content: [{ type: 'input_text', text: 'Say hello to the caller and explain briefly what you can do.' }]
+    //     }
+    //   };
+    //   openAiWs.send(JSON.stringify(initialConversationItem));
+    //   openAiWs.send(JSON.stringify({ type: 'response.create' }));
+    // };
 
-    // Handle barge-in (caller starts speaking while we play audio)
+    // Handle interruption when the caller starts speaking
     const handleSpeechStartedEvent = () => {
       if (markQueue.length > 0 && responseStartTimestampTwilio != null) {
         const elapsedTime = latestMediaTimestamp - responseStartTimestampTwilio;
-        if (SHOW_TIMING_MATH) {
-          console.log(`Truncate elapsed: ${latestMediaTimestamp} - ${responseStartTimestampTwilio} = ${elapsedTime}ms`);
-        }
-
         if (lastAssistantItem) {
           const truncateEvent = {
             type: 'conversation.item.truncate',
@@ -177,9 +249,7 @@ You are a TTS renderer and transcriber.
           openAiWs.send(JSON.stringify(truncateEvent));
         }
 
-        // Clear Twilio playback buffer
-        connection.socket.send(JSON.stringify({ event: 'clear', streamSid }));
-
+        connection.send(JSON.stringify({ event: 'clear', streamSid }));
         // Reset
         markQueue = [];
         lastAssistantItem = null;
@@ -187,155 +257,130 @@ You are a TTS renderer and transcriber.
       }
     };
 
-    // ----- Twilio -> OpenAI audio (input) -----
-    connection.socket.on('message', (raw) => {
-      let msg; try { msg = JSON.parse(raw); } catch { return; }
-
-      if (msg.event === 'start') {
-        streamSid = msg.start.streamSid;
-        console.log('Twilio stream started:', streamSid);
-        responseStartTimestampTwilio = null;
-        latestMediaTimestamp = 0;
-        return;
+    // Mark helper so we know when playback finished
+    const sendMark = (connection, streamSid) => {
+      if (streamSid) {
+        const markEvent = { event: 'mark', streamSid, mark: { name: 'responsePart' } };
+        connection.send(JSON.stringify(markEvent));
+        markQueue.push('responsePart');
       }
+    };
 
-      if (msg.event === 'media' && msg.media?.payload) {
-        openAiWs.send(JSON.stringify({
-          type: 'input_audio_buffer.append',
-          audio: msg.media.payload // base64 PCMU
-        }));
-        latestMediaTimestamp = Number(msg.media.timestamp) || latestMediaTimestamp;
-        return;
-      }
-
-      if (msg.event === 'mark') {
-        if (markQueue.length > 0) markQueue.shift();
-        return;
-      }
-
-      if (msg.event === 'stop') {
-        console.log('Twilio stream stopped:', streamSid);
-        return;
-      }
-    });
-
-    // ----- OpenAI events: ASR -> Gemini -> TTS -----
+    // OpenAI WS events
     openAiWs.on('open', () => {
       console.log('Connected to the OpenAI Realtime API');
       setTimeout(initializeSession, 100);
     });
 
-    openAiWs.on('message', async (buf) => {
-      let msg; try { msg = JSON.parse(buf.toString()); } catch { return; }
-      if (LOG_EVENT_TYPES.includes(msg.type)) console.log('OpenAI event:', msg.type);
+    openAiWs.on('message', async (data) => {
+      try {
+        const response = JSON.parse(data);
 
-      // End of caller speech -> commit audio & request transcription (text only)
-      if (msg.type === 'input_audio_buffer.speech_stopped') {
-        openAiWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-        currentTranscript = '';
-        openAiWs.send(JSON.stringify({
-          type: 'response.create',
-          response: {
-            modalities: ['text'],
-            metadata: { kind: 'transcription' },
-            instructions: 'Transcribe the caller’s last utterance EXACTLY. Return ONLY the raw transcript.'
-          }
-        }));
-        return;
-      }
-
-      // Barge-in: caller started speaking
-      if (msg.type === 'input_audio_buffer.speech_started') {
-        handleSpeechStartedEvent();
-        return;
-      }
-
-      // Collect transcription deltas
-      if (msg.type === 'response.output_text.delta' && msg.response?.metadata?.kind === 'transcription') {
-        currentTranscript += (msg.delta || '');
-        return;
-      }
-
-      // Transcription complete -> call Gemini -> ask OpenAI to speak VERBATIM
-      if (msg.type === 'response.completed' && msg.response?.metadata?.kind === 'transcription') {
-        if (responseInFlight) return;
-        responseInFlight = true;
-
-        try {
-          const base = SELF_ORIGIN || `http://127.0.0.1:${PORT}`;
-          const r = await fetch(`${base}/gemini/query`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              query: currentTranscript,
-              context: { streamSid, ts: Date.now() }
-            })
-          });
-          const { answer } = await r.json();
-
-          openAiWs.send(JSON.stringify({
-            type: 'response.create',
-            response: {
-              modalities: ['audio'],
-              metadata: { kind: 'tts' },
-              instructions: `Read this VERBATIM:\n${answer}`
-            }
-          }));
-        } catch (e) {
-          console.error('Gemini fetch error:', e);
-          openAiWs.send(JSON.stringify({
-            type: 'response.create',
-            response: {
-              modalities: ['audio'],
-              instructions: 'Sorry—our data service had a hiccup. Please try that again.'
-            }
-          }));
-        } finally {
-          currentTranscript = '';
-          responseInFlight = false;
-        }
-        return;
-      }
-
-      // Stream audio back to Twilio as OpenAI generates it
-      if (msg.type === 'response.output_audio.delta' && msg.delta && streamSid) {
-        connection.socket.send(JSON.stringify({
-          event: 'media',
-          streamSid,
-          media: { payload: msg.delta }
-        }));
-
-        // First delta from a new response starts the elapsed timer
-        if (!responseStartTimestampTwilio) {
-          responseStartTimestampTwilio = latestMediaTimestamp;
-          if (SHOW_TIMING_MATH) {
-            console.log(`Set start timestamp: ${responseStartTimestampTwilio}ms`);
-          }
+        if (LOG_EVENT_TYPES.includes(response.type)) {
+          console.log(`Received event: ${response.type}`, response);
         }
 
-        if (msg.item_id) lastAssistantItem = msg.item_id;
-        sendMark();
-        return;
+        // Tool/function call from the model
+        if (response.type === 'response.function_call' && response.name === 'queryGemini') {
+          const { call_id } = response;
+          const { query, user_context } = response.arguments || {};
+
+          try {
+            const base = getExternalBase();
+            const res = await fetch(`${base}/gemini/query`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ query, context: user_context || {} })
+            });
+            const dataOut = await res.json();
+
+            openAiWs.send(
+              JSON.stringify({
+                type: 'response.function_call_output',
+                call_id,
+                output: JSON.stringify(dataOut) // must be a string
+              })
+            );
+          } catch (err) {
+            openAiWs.send(
+              JSON.stringify({
+                type: 'response.function_call_output',
+                call_id,
+                output: JSON.stringify({ error: String(err) })
+              })
+            );
+          }
+          return; // avoid double-processing
+        }
+
+        // Stream audio back to Twilio
+        if (response.type === 'response.output_audio.delta' && response.delta) {
+          const audioDelta = { event: 'media', streamSid, media: { payload: response.delta } };
+          connection.send(JSON.stringify(audioDelta));
+
+          if (!responseStartTimestampTwilio) {
+            responseStartTimestampTwilio = latestMediaTimestamp;
+          }
+
+          if (response.item_id) {
+            lastAssistantItem = response.item_id;
+          }
+
+          sendMark(connection, streamSid);
+        }
+
+        if (response.type === 'input_audio_buffer.speech_started') {
+          handleSpeechStartedEvent();
+        }
+      } catch (error) {
+        console.error('Error processing OpenAI message:', error, 'Raw message:', data);
+      }
+    });
+
+    // Incoming Twilio Media Stream frames
+    connection.on('message', (message) => {
+      try {
+        const data = JSON.parse(message);
+
+        switch (data.event) {
+          case 'media':
+            latestMediaTimestamp = data.media.timestamp;
+            if (openAiWs.readyState === WebSocket.OPEN) {
+              openAiWs.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: data.media.payload }));
+            }
+            break;
+          case 'start':
+            streamSid = data.start.streamSid;
+            console.log('Incoming stream has started', streamSid);
+            responseStartTimestampTwilio = null;
+            latestMediaTimestamp = 0;
+            break;
+          case 'mark':
+            if (markQueue.length > 0) markQueue.shift();
+            break;
+          default:
+            console.log('Received non-media event:', data.event);
+            break;
+        }
+      } catch (error) {
+        console.error('Error parsing message:', error, 'Message:', message);
       }
     });
 
     // Cleanup
-    connection.socket.on('close', () => {
-      try { openAiWs.close(); } catch {}
-      console.log('Client disconnected');
+    connection.on('close', () => {
+      if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+      console.log('Client disconnected.');
     });
-    openAiWs.on('close', () => {
-      try { connection.socket.close(); } catch {}
-      console.log('Disconnected from the OpenAI Realtime API');
-    });
-    openAiWs.on('error', (err) => console.error('OpenAI WS error:', err));
+
+    openAiWs.on('close', () => console.log('Disconnected from the OpenAI Realtime API'));
+    openAiWs.on('error', (error) => console.error('Error in the OpenAI WebSocket:', error));
   });
 });
 
 // -----------------------------
 // Boot
 // -----------------------------
-// Start server (local: 5050, Render: $PORT)
 fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
   if (err) {
     console.error(err);
