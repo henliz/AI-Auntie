@@ -19,28 +19,19 @@ jobs:
 
       - name: Preflight (paths + JSON parse)
         run: |
-          echo "== tree =="
-          ls -la
-          echo "== ai =="
-          ls -la ai || true
-          echo "== ai/prompts =="
-          ls -la ai/prompts || true
-          echo "== scripts =="
-          ls -la scripts || true
           node - <<'JS'
           const fs=require('fs'), R=p=>fs.readFileSync(p,'utf8');
           const need = ["ai/prompts/router.system.md","ai/triage.schema.json","scripts/smoke-gemini-router.mjs"];
-          let ok=true;
-          for (const p of need){ if(!fs.existsSync(p)){ console.error("MISSING",p); ok=false; } }
-          try{ JSON.parse(R("ai/triage.schema.json")); } catch(e){ console.error("Bad triage.schema.json:", e.message); ok=false; }
-          if(!ok) process.exit(1); else console.log("Preflight OK");
+          for (const p of need) if(!fs.existsSync(p)) { console.error("MISSING",p); process.exit(1); }
+          try{ JSON.parse(R("ai/triage.schema.json")); }catch(e){ console.error("Bad triage.schema.json:", e.message); process.exit(1); }
+          console.log("Preflight OK");
           JS
 
       - name: Install SDK
         run: |
           npm init -y
           npm i @google/generative-ai@latest
-          node -e "console.log('SDK version', require('@google/generative-ai/package.json').version)"
+          node -e "console.log('SDK', require('@google/generative-ai/package.json').version)"
 
       - name: Router smoke
         run: node scripts/smoke-gemini-router.mjs
