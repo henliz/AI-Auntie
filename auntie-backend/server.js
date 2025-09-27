@@ -8,7 +8,7 @@ const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 
-// Your local modules (keep your stubs/real impls)
+// ---- Your modules (stubs or real)
 const { formatReply } = require('./composer');
 const ai = require('./ai');
 const sf = require('./snowflake');
@@ -17,21 +17,21 @@ const db = require('./mongo');
 const app = express();
 app.use(express.urlencoded({ extended: false })); // Twilio posts form-encoded
 
-// ---------- Static media for clips ----------
+// ---- Static media for audio clips
 const MEDIA_DIR = path.join(__dirname, 'media');
 if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
 app.use('/media', express.static(MEDIA_DIR));
 
-// ---------- Twilio REST client (for call control + SMS) ----------
+// ---- Twilio REST (call control + SMS)
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken  = process.env.TWILIO_AUTH_TOKEN;
 const twilioClient = (accountSid && authToken) ? twilio(accountSid, authToken) : null;
 
-// ---------- Basic routes ----------
+// ---- Basic routes
 app.get('/health', (_req, res) => res.send('ok'));
 app.get('/', (_req, res) => res.send('AI Auntie backend is up 🌸'));
 
-// ---------- SMS Webhook ----------
+// ====================== SMS WEBHOOK ======================
 app.all('/twilio/sms', async (req, res) => {
   const from = req.body.From || '';
   const body = (req.body.Body || '').trim();
@@ -50,14 +50,14 @@ app.all('/twilio/sms', async (req, res) => {
     const twiml = new twilio.twiml.MessagingResponse();
     twiml.message(formatReply({ bodyText: reply_text, resources }));
     return res.type('text/xml').send(twiml.toString());
-  } catch (e) {
+  } catch {
     const twiml = new twilio.twiml.MessagingResponse();
     twiml.message("Auntie glitched—try again in a minute. If it feels urgent, call local emergency. 🌸");
     return res.type('text/xml').send(twiml.toString());
   }
 });
 
-// ---------- Voice (Media Stream entry; NO Polly greeting) ----------
+// ====================== VOICE: MEDIA STREAM ENTRY (NO POLLY) ======================
 function wsStreamUrl(req) {
   const base = process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`;
   return base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/twilio-media';
@@ -65,13 +65,13 @@ function wsStreamUrl(req) {
 
 app.all('/twilio/voice-rt', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
+  // No <Say>; we’ll speak via OA Realtime → clip → <Play>
   const connect = twiml.connect();
-  // Bidirectional in spirit; Twilio won't play inbound WS audio—so we Play clips via call control.
-  connect.stream({ url: wsStreamUrl(req) });
+  connect.stream({ url: wsStreamUrl(req) }); // bidirectional path (Twilio only sends -> us)
   return res.type('text/xml').send(twiml.toString());
 });
 
-// ---------- HTTP server + WS upgrade ----------
+// ====================== HTTP SERVER + WS UPGRADE ======================
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ noServer: true });
 
@@ -86,7 +86,7 @@ server.on('upgrade', (request, socket, head) => {
   }
 });
 
-// ---------- Helpers: μ-law <-> PCM16 + WAV writer ----------
+// ====================== UTIL: μ-law <-> PCM16 + WAV ======================
 function muLawDecodeByte(u) {
   u = ~u & 0xff;
   const sign = (u & 0x80);
@@ -152,7 +152,7 @@ function pcm16ToWav(int16, sampleRate = 8000) {
   buffer.write('fmt ', 12);
   buffer.writeUInt32LE(16, 16);              // Subchunk1Size (PCM)
   buffer.writeUInt16LE(1, 20);               // PCM
-  buffer.writeUInt16LE(numChannels, 22);
+  buffer.writeUInt16LE(1, 22);               // mono
   buffer.writeUInt32LE(sampleRate, 24);
   buffer.writeUInt32LE(byteRate, 28);
   buffer.writeUInt16LE(blockAlign, 32);
@@ -160,12 +160,11 @@ function pcm16ToWav(int16, sampleRate = 8000) {
   buffer.write('data', 36);
   buffer.writeUInt32LE(dataSize, 40);
 
-  // PCM data
   Buffer.from(int16.buffer, int16.byteOffset, dataSize).copy(buffer, 44);
   return buffer;
 }
 
-// ---------- Utils ----------
+// ====================== HELPERS ======================
 function absoluteBaseFromRequest(req) {
   if (process.env.RENDER_EXTERNAL_URL) return process.env.RENDER_EXTERNAL_URL;
   const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
@@ -176,18 +175,23 @@ function wsUrlFromHttpBase(base) {
   return base.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/twilio-media';
 }
 
-// ---------- WS bridge: Twilio ⇄ OpenAI Realtime (clip-and-play) ----------
+// Track which calls have already been greeted (so reconnects don’t re-greet)
+const greetedCalls = new Map(); // callSid -> true
+
+// ====================== WS BRIDGE: Twilio ⇄ OpenAI Realtime ======================
 wss.on('connection', (ws, request) => {
   let frames = 0;
   let streamSid = 'unknown';
   let callSid = 'unknown';
-  let speaking = false; // avoid overlapping call updates
+  let speaking = false;         // avoid overlapping call updates
+  let pendingGreeting = false;  // greet after we have callSid if OA opens first
+
   const httpBase = absoluteBaseFromRequest(request);
   const wsStreamUrlAbsolute = wsUrlFromHttpBase(httpBase);
 
   console.log('[WS] Twilio media stream connected');
 
-  // 1) Connect to OpenAI Realtime (WebSocket)
+  // -- Connect to OpenAI Realtime
   const oaHeaders = {
     'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
     'OpenAI-Beta': 'realtime=v1',
@@ -199,13 +203,11 @@ wss.on('connection', (ws, request) => {
 
   let oaReady = false;
   let pendingBatches = [];
-
-  // Buffer for each spoken reply
-  let oaAudioChunks = []; // Buffers of PCM16 @ 16k per response
+  let oaAudioChunks = []; // Buffers of PCM16@16k per OA response
 
   oa.on('open', () => {
     oaReady = true;
-    // Choose OA voice + 16k PCM output
+    // Choose voice + PCM 16k output
     oa.send(JSON.stringify({
       type: 'session.update',
       session: {
@@ -213,19 +215,21 @@ wss.on('connection', (ws, request) => {
         audio_format: { type: 'pcm16', sample_rate: 16000 }
       }
     }));
-    // Small intro (no Polly)
-    oa.send(JSON.stringify({
-      type: 'response.create',
-      response: {
-        modalities: ['audio'],
-        instructions: "Hi love, I’m Auntie. I’m listening now."
-      }
-    }));
+    // If Twilio already gave us CallSid and we haven't greeted yet, greet now.
+    if (pendingGreeting && callSid && !greetedCalls.get(callSid)) {
+      greetedCalls.set(callSid, true);
+      oa.send(JSON.stringify({
+        type: 'response.create',
+        response: { modalities: ['audio'], instructions: "Hi love, I’m Auntie. I’m listening now." }
+      }));
+      pendingGreeting = false;
+    }
+    // Flush early caller audio
     for (const b of pendingBatches) oa.send(b);
     pendingBatches = [];
   });
 
-  // Collect OA audio deltas, finalize on completion -> write WAV -> call.update(<Play> + <Stream>)
+  // Collect OA audio deltas; on completion write 8k WAV and update the call to Play + re-Stream
   oa.on('message', async (data) => {
     try {
       const evt = JSON.parse(data.toString());
@@ -234,42 +238,47 @@ wss.on('connection', (ws, request) => {
       }
       if (evt.type === 'response.completed') {
         if (!twilioClient || !callSid || speaking) {
-          oaAudioChunks = []; // nothing to do
+          oaAudioChunks = [];
           return;
         }
         speaking = true;
-        // Join all PCM16@16k chunks
+
+        // Join PCM16@16k chunks → downsample to 8k → write WAV
         const joined16k = Buffer.concat(oaAudioChunks);
         oaAudioChunks = [];
+        if (joined16k.length === 0) {
+          speaking = false;
+          return;
+        }
 
-        // Convert to Int16Array
         const pcm16_16k = new Int16Array(joined16k.buffer, joined16k.byteOffset, Math.floor(joined16k.length / 2));
-        // Downsample to 8k (phone), then write WAV
-        const pcm16_8k = downsample16kTo8k(pcm16_16k);
-        const wav = pcm16ToWav(pcm16_8k, 8000);
+        const pcm16_8k  = downsample16kTo8k(pcm16_16k);
+        const wav       = pcm16ToWav(pcm16_8k, 8000);
+
         const fname = `auntie-${Date.now()}.wav`;
         const fpath = path.join(MEDIA_DIR, fname);
         fs.writeFileSync(fpath, wav);
         const clipUrl = `${httpBase}/media/${fname}`;
 
-        // Redirect the live call to: <Play clip> then <Connect><Stream> again
+        // Redirect live call: Play clip, then re-open stream
         const newTwiML =
           `<Response>` +
             `<Play>${clipUrl}</Play>` +
             `<Connect><Stream url="${wsStreamUrlAbsolute}"/></Connect>` +
           `</Response>`;
+
         try {
           await twilioClient.calls(callSid).update({ twiml: newTwiML });
           console.log('[CALL] updated to Play clip then re-stream');
         } catch (err) {
-          console.log('[CALL] update failed, fallback Say:', err?.message);
-          // Gentle fallback: Say a short line (last resort)
-          const fallbackTwiml =
+          console.log('[CALL] update failed:', err?.message);
+          // Fallback Say (last resort)
+          const fallback =
             `<Response>` +
               `<Say voice="Polly.Kendra">I’m here with you. If the call pauses, text me and I’ll send details.</Say>` +
               `<Connect><Stream url="${wsStreamUrlAbsolute}"/></Connect>` +
             `</Response>`;
-          try { await twilioClient.calls(callSid).update({ twiml: fallbackTwiml }); } catch {}
+          try { await twilioClient.calls(callSid).update({ twiml: fallback }); } catch {}
         } finally {
           speaking = false;
         }
@@ -282,9 +291,9 @@ wss.on('connection', (ws, request) => {
   oa.on('close', () => console.log('[OA] closed'));
   oa.on('error', (e) => console.log('[OA] error', e?.message));
 
-  // 2) Twilio → OpenAI (caller audio up) — fast, chunked turns
+  // -- Twilio → OA (caller audio up) — ~0.5–0.6s chunks
   let inputBatch = [];
-  const FRAMES_PER_COMMIT = 24; // ~480ms; tune 20–30 for feel/latency
+  const FRAMES_PER_COMMIT = 24; // ≈480ms at ~20ms frames
 
   ws.on('message', (data) => {
     let msg;
@@ -293,8 +302,22 @@ wss.on('connection', (ws, request) => {
     switch (msg.event) {
       case 'start':
         streamSid = msg.start?.streamSid || streamSid;
-        callSid = msg.start?.callSid || callSid;
+        callSid   = msg.start?.callSid   || callSid;
         console.log(`[WS] start: callSid=${callSid} streamSid=${streamSid}`);
+
+        // Trigger greeting only after we know CallSid (and only once per call)
+        if (oaReady) {
+          if (!greetedCalls.get(callSid)) {
+            greetedCalls.set(callSid, true);
+            oa.send(JSON.stringify({
+              type: 'response.create',
+              response: { modalities: ['audio'], instructions: "Hi love, I’m Auntie. I’m listening now." }
+            }));
+          }
+        } else {
+          // OA not ready yet, greet when OA opens
+          pendingGreeting = true;
+        }
         break;
 
       case 'media':
@@ -304,7 +327,7 @@ wss.on('connection', (ws, request) => {
         const pcm16 = upsample8kTo16k(pcm8);
         inputBatch.push(Buffer.from(pcm16.buffer));
 
-        // Every ~0.5–0.6s, send batch to OA and request a spoken reply
+        // Every ~0.5–0.6s, send batch to OA and ask for a spoken reply
         if (frames % FRAMES_PER_COMMIT === 0) {
           const joined = Buffer.concat(inputBatch);
           inputBatch = [];
@@ -345,7 +368,7 @@ wss.on('connection', (ws, request) => {
   });
 });
 
-// ---------- Start ----------
+// ====================== START SERVER ======================
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Auntie on :${PORT} (WS ready at /twilio-media)`);
