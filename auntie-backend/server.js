@@ -36,6 +36,5 @@ app.post('/twilio/voice', (_req, res) => {
 });
 
 app.get('/', (_req, res) => res.send('AI Auntie backend is up 🌸'));
-app.listen(process.env.PORT, () =>
-  console.log(`Auntie listening on http://localhost:${process.env.PORT}`)
-);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Auntie on :${PORT}`));
