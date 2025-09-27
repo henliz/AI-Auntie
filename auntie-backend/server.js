@@ -41,6 +41,12 @@ fastify.addHook('onRequest', (req, _reply, done) => {
   done();
 });
 
+// add this near your other routes
+fastify.get('/', async (_req, reply) => {
+  reply.send({ ok: true });
+});
+
+
 // Health check: super fast, always-200
 fastify.get('/health', async (_req, reply) => {
   reply.code(200).type('text/plain').send('OK');
