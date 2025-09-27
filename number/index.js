@@ -21,10 +21,13 @@ fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
 // Constants
-const SYSTEM_MESSAGE = 'You are a helpful and bubbly AI assistant who loves to chat about anything the user is interested about and is prepared to offer them facts. You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. Always stay positive, but work in a joke when appropriate.';
 const VOICE = 'alloy';
 const TEMPERATURE = 0.8; // Controls the randomness of the AI's responses
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
+
+// Your base system message; we’ll append tool-use guidance below
+const BASE_SYSTEM_MESSAGE =
+  'You are a helpful and bubbly AI assistant who loves to chat about anything the user is interested about and is prepared to offer them facts. You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. Always stay positive, but work in a joke when appropriate.';
 
 // List of Event Types to log to the console. See the OpenAI Realtime API Documentation: https://platform.openai.com/docs/api-reference/realtime
 const LOG_EVENT_TYPES = [
@@ -42,13 +45,16 @@ const LOG_EVENT_TYPES = [
 // Show AI response elapsed timing calculations
 const SHOW_TIMING_MATH = false;
 
+// -----------------------------
+// Basic Routes
+// -----------------------------
+
 // Root Route
 fastify.get('/', async (request, reply) => {
     reply.send({ message: 'Twilio Media Stream Server is running!' });
 });
 
-// Route for Twilio to handle incoming calls
-// <Say> punctuation to improve text-to-speech translation
+// Twilio webhook to start the call -> opens a WS back to /media-stream
 fastify.all('/incoming-call', async (request, reply) => {
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
@@ -63,7 +69,52 @@ fastify.all('/incoming-call', async (request, reply) => {
     reply.type('text/xml').send(twimlResponse);
 });
 
-// WebSocket route for media-stream
+// -----------------------------
+// NEW: Gemini gateway route
+// -----------------------------
+// This is a stub you can replace with your real Gemini+Snowflake call.
+// After you wire your true backend, just return { answer, sources, meta? }.
+fastify.post('/gemini/query', async (request, reply) => {
+    try {
+        const { query, context = {} } = request.body || {};
+
+        // TODO: Replace this block with a call to YOUR Gemini service:
+        // const { answer, sources } = await callGemini({ query, context });
+
+        const answer = `Stubbed Gemini answer for: "${query}"`;
+        const sources = ['snowflake:replace-me'];
+
+        return reply.send({
+            answer,
+            sources,
+            meta: { retrieved_at: new Date().toISOString(), context }
+        });
+    } catch (e) {
+        request.log.error(e);
+        return reply.code(500).send({ error: String(e) });
+    }
+});
+
+// Optional quick in-browser tester (no tools needed)
+fastify.get('/gemini/test', async (_req, reply) => {
+    reply.type('text/html').send(`
+  <!doctype html><meta charset="utf-8">
+  <h1>Gemini Query Tester</h1>
+  <input id="q" value="current average wait time?" style="width:400px"/>
+  <button onclick="go()">Send</button>
+  <pre id="out"></pre>
+  <script>
+  async function go(){
+    const r = await fetch('/gemini/query',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:document.getElementById('q').value})});
+    document.getElementById('out').textContent = JSON.stringify(await r.json(), null, 2);
+  }
+  </script>`);
+  });
+  
+
+// -----------------------------
+// WebSocket route for media-stream (Twilio <-> OpenAI Realtime)
+// -----------------------------
 fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log('Client connected');
@@ -75,11 +126,23 @@ fastify.register(async (fastify) => {
         let markQueue = [];
         let responseStartTimestampTwilio = null;
 
-        const openAiWs = new WebSocket(`wss://api.openai.com/v1/realtime?model=gpt-realtime&temperature=${TEMPERATURE}`, {
-            headers: {
-                Authorization: `Bearer ${OPENAI_API_KEY}`,
-            }
-        });
+        // Connect to OpenAI Realtime WS
+        const openAiWs = new WebSocket(
+          `wss://api.openai.com/v1/realtime?model=gpt-realtime&temperature=${TEMPERATURE}`,
+          {
+            headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }
+          }
+        );
+
+        // Build a system message that nudges tool usage
+        const SYSTEM_MESSAGE = `
+${BASE_SYSTEM_MESSAGE}
+
+# Tool Use
+- When the caller asks for facts, metrics, schedules, or anything that may rely on organizational/internal data, CALL the function "queryGemini" with a concise question (and optional user context).
+- After the tool returns, summarize results conversationally for the caller. If sources are provided, refer to them in plain language (e.g., "from our records").
+- If the tool errors or times out, apologize briefly and suggest one actionable alternative, then continue the conversation.
+`.trim();
 
         // Control initial session with OpenAI
         const initializeSession = () => {
@@ -87,14 +150,36 @@ fastify.register(async (fastify) => {
                 type: 'session.update',
                 session: {
                     type: 'realtime',
-                    model: "gpt-realtime",
-                    output_modalities: ["audio"],
+                    model: 'gpt-realtime',
+                    output_modalities: ['audio'],
                     audio: {
-                        input: { format: { type: 'audio/pcmu' }, turn_detection: { type: "server_vad" } },
-                        output: { format: { type: 'audio/pcmu' }, voice: VOICE },
+                        input: { format: { type: 'audio/pcmu' }, turn_detection: { type: 'server_vad' } },
+                        output: { format: { type: 'audio/pcmu' }, voice: VOICE }
                     },
                     instructions: SYSTEM_MESSAGE,
-                },
+
+                    // NEW: expose a tool the model can call
+                    tools: [
+                        {
+                            type: 'function',
+                            name: 'queryGemini',
+                            description:
+                                'Query organization knowledge via Gemini (grounded on Snowflake). Use for accurate, up-to-date internal data.',
+                            parameters: {
+                                type: 'object',
+                                properties: {
+                                    query: { type: 'string', description: 'Natural-language question.' },
+                                    user_context: {
+                                        type: 'object',
+                                        description: 'Optional caller/session metadata.',
+                                        additionalProperties: true
+                                    }
+                                },
+                                required: ['query']
+                            }
+                        }
+                    ]
+                }
             };
 
             console.log('Sending session update:', JSON.stringify(sessionUpdate));
@@ -154,7 +239,7 @@ fastify.register(async (fastify) => {
             }
         };
 
-        // Send mark messages to Media Streams so we know if and when AI response playback is finished
+        // Send mark messages to Media Streams so we know if/when AI response playback is finished
         const sendMark = (connection, streamSid) => {
             if (streamSid) {
                 const markEvent = {
@@ -174,7 +259,7 @@ fastify.register(async (fastify) => {
         });
 
         // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
-        openAiWs.on('message', (data) => {
+        openAiWs.on('message', async (data) => {
             try {
                 const response = JSON.parse(data);
 
@@ -182,6 +267,43 @@ fastify.register(async (fastify) => {
                     console.log(`Received event: ${response.type}`, response);
                 }
 
+                // NEW: Handle tool/function calls from the model
+                if (response.type === 'response.function_call' && response.name === 'queryGemini') {
+                    const { call_id } = response;
+                    const { query, user_context } = response.arguments || {};
+
+                    try {
+                        // Call our local Gemini route (works locally and on Render)
+                        const base =
+                            process.env.RENDER_EXTERNAL_URL ||
+                            `http://localhost:${PORT}`;
+
+                        const res = await fetch(`${base}/gemini/query`, {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/json' },
+                            body: JSON.stringify({ query, context: user_context || {} })
+                        });
+
+                        const dataOut = await res.json();
+
+                        // Return the tool result to OpenAI Realtime
+                        openAiWs.send(JSON.stringify({
+                            type: 'response.function_call_output',
+                            call_id,
+                            output: JSON.stringify(dataOut) // must be a string
+                        }));
+                    } catch (err) {
+                        openAiWs.send(JSON.stringify({
+                            type: 'response.function_call_output',
+                            call_id,
+                            output: JSON.stringify({ error: String(err) })
+                        }));
+                    }
+                    // Done handling tool call; return to avoid double-processing this message
+                    return;
+                }
+
+                // Audio streaming from OpenAI back to Twilio
                 if (response.type === 'response.output_audio.delta' && response.delta) {
                     const audioDelta = {
                         event: 'media',
@@ -199,7 +321,7 @@ fastify.register(async (fastify) => {
                     if (response.item_id) {
                         lastAssistantItem = response.item_id;
                     }
-                    
+
                     sendMark(connection, streamSid);
                 }
 
@@ -233,7 +355,7 @@ fastify.register(async (fastify) => {
                         console.log('Incoming stream has started', streamSid);
 
                         // Reset start and media timestamp on a new stream
-                        responseStartTimestampTwilio = null; 
+                        responseStartTimestampTwilio = null;
                         latestMediaTimestamp = 0;
                         break;
                     case 'mark':
@@ -256,7 +378,7 @@ fastify.register(async (fastify) => {
             console.log('Client disconnected.');
         });
 
-        // Handle WebSocket close and errors
+        // Handle OpenAI WS close and errors
         openAiWs.on('close', () => {
             console.log('Disconnected from the OpenAI Realtime API');
         });
@@ -267,6 +389,9 @@ fastify.register(async (fastify) => {
     });
 });
 
+// -----------------------------
+// Boot
+// -----------------------------
 fastify.listen({ port: PORT }, (err) => {
     if (err) {
         console.error(err);
