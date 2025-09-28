@@ -26,7 +26,7 @@ and always include safety thresholds if relevant. End with a gentle check-back l
 
 const MAX_SMS_LENGTH = 1500; // Twilio limit is 1600, keep buffer
 
-app.post("/sms", async (req, res) => {
+app.post("/twilio/sms", async (req, res) => {
   const userMessage = req.body.Body;
   console.log("Incoming SMS:", userMessage);
 
