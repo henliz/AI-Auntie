@@ -87,7 +87,7 @@ fastify.all('/incoming-call', async (request, reply) => {
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
-      <Say voice="Google.en-US-Sage">
+      <Say voice="Google.en-US-Chirp3-HD-Aoede">
         Please hold on just a moment while we bring Auntie to the phone. She’s so excited to chat with you.
       </Say>
       <Pause length="1"/>
