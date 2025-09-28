@@ -1,3 +1,7 @@
+// backend/ai/brain.js
+// Simple Gemini wrapper that returns a structured reply for SMS.
+// If you prefer OpenAI, swap this out but keep the same return shape.
+
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
@@ -15,41 +19,44 @@ Return ONLY JSON with:
 `
 });
 
-export async function brainReply({ text, context = {}, region = null, history = [] }) {
-  const prompt = [
-    `User context: ${JSON.stringify(context)}`,
-    `Short history:\n${history.map(h => `${h.sender}: ${h.text}`).join("\n")}`,
-    `Now user says: "${text}"`
-  ].join("\n\n");
+export async function generateAuntieReply(userText, { region } = {}) {
+  const prompt = `
+User text: ${userText}
+Region hint: ${region || "unknown"}
+
+Return valid JSON only with the exact keys described above.
+  `;
 
   const out = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: prompt }]}],
-    generationConfig: {
-      temperature: 0.6,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "object",
-        properties: {
-          intent: { type: "string", enum: ["COMFORT","RESOURCE","ESCALATE"] },
-          topic: { type: "string" },
-          region: { type: "string", nullable: true },
-          reply_text: { type: "string" },
-          red_flags: { type: "array", items: { type: "string" } },
-          updates: { type: "object", properties: { context: { type: "object", additionalProperties: true, nullable: true } } }
-        },
-        required: ["intent","topic","reply_text","red_flags"],
-        additionalProperties: false
-      }
-    }
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.4, maxOutputTokens: 200 }
   });
 
-  const json = JSON.parse(out.response.text());
+  let json;
+  try {
+    const raw = out.response.text().trim();
+    json = JSON.parse(raw);
+  } catch (e) {
+    // Extremely defensive fallback
+    json = {
+      intent: "COMFORT",
+      topic: "general",
+      region: region || null,
+      reply_text: "I’m here. Can you share a few more details so I can help better?",
+      red_flags: [],
+      updates: {}
+    };
+  }
+
   return {
-    intent: json.intent,
-    topic: json.topic,
+    intent: json.intent || "COMFORT",
+    topic: json.topic || "general",
     region: json.region ?? region ?? null,
-    reply_text: json.reply_text,
-    red_flags: json.red_flags || [],
+    reply_text: json.reply_text || "I’m here for you.",
+    red_flags: Array.isArray(json.red_flags) ? json.red_flags : [],
     updates: json.updates || {}
   };
 }
+
+// Backwards-compat export (if other files import brainReply)
+export const brainReply = generateAuntieReply;
