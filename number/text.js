@@ -24,7 +24,7 @@ and always include safety thresholds if relevant. End with a gentle check-back l
 "Would you like more ideas?" or "Does that feel helpful?"
 `;
 
-app.post("/sms", async (req, res) => {
+app.post("/twilio/sms", async (req, res) => {
   const userMessage = req.body.Body;
   console.log("Incoming SMS:", userMessage);
 
