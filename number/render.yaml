@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: auntie-backend
+    name: auntie-sms
     env: node
     plan: free
     buildCommand: npm install
