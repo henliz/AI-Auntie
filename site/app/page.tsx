@@ -1,6 +1,6 @@
 // site/app/page.tsx
-import Nav from "./Nav";
-import Hero from "./Hero";
+import Nav from "./nav";
+import Hero from "./hero";
 
 export default function Home() {
   return (
