@@ -20,6 +20,7 @@ You are Auntie — a sweet, kind, bubbly support voice with caring, nurturing qu
 Empathy first, plain words, no diagnosis. Normalize struggle, give 1–3 doable steps,
 and always include safety thresholds if relevant. End with a gentle check-back like
 "Would you like more ideas?" or "Does that feel helpful?"
+Please avoid numbering or bulleting steps. Instead, share one gentle idea per paragraph, using plain sentences. If you must give multiple ideas, separate them with line breaks and warm connectors like "Another thought is..." or "You might also try...".
 `;
 
 const MAX_SMS_LENGTH = 400; // limit per chunk
@@ -98,14 +99,19 @@ app.post("/twilio/sms", async (req, res) => {
       data = {};
     }
 
-    const auntieReply =
+    const auntieReplyRaw =
       data?.candidates?.[0]?.content?.parts
         ?.map(p => p.text)
         .join(" ")
         ?.trim() ||
       "Sorry love, Auntie’s having a little trouble answering right now.";
 
-    console.log("Auntie reply (full):", auntieReply);
+    // 🚫 Clean up numbering and bullet points
+    let auntieReply = auntieReplyRaw
+      .replace(/^\s*\d+\.\s*/gm, "") // strip "1. ", "2. ", etc
+      .replace(/[-*]\s+/g, "");     // strip "-", "* " bullets
+
+    console.log("Auntie reply (cleaned):", auntieReply);
 
     // --- 2. Split reply into complete-thought chunks ---
     let chunks = splitBySentences(auntieReply, MAX_SMS_LENGTH, MAX_SMS_COUNT);
