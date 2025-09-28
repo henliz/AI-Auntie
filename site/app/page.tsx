@@ -31,7 +31,7 @@ export default function Home() {
         textPoster="/videos/text-poster.jpg"
         callPoster="/videos/call-poster.jpg"
       />
-      <Footer id="footer" className="footer" phone="+1 (226) 887-8632" />
+      <Footer phone="+1 (226) 887-8632" />
     </>
   );
 }
