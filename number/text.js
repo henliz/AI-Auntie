@@ -22,7 +22,8 @@ and always include safety thresholds if relevant. End with a gentle check-back l
 "Would you like more ideas?" or "Does that feel helpful?"
 `;
 
-const MAX_SMS_LENGTH = 700; // Twilio hard limit is 1600, keep buffer
+const MAX_SMS_LENGTH = 400; // new limit per chunk
+const MAX_SMS_COUNT = 5;    // cap Auntie at 5 messages
 const MESSAGE_DELAY_MS = 4000; // 4s delay between sends
 
 // Twilio REST client
@@ -82,8 +83,16 @@ app.post("/twilio/sms", async (req, res) => {
 
     console.log("Auntie reply (full):", auntieReply);
 
-    // --- 2. Split reply into chunks ---
+    // --- 2. Split reply into 400-char chunks ---
     let chunks = auntieReply.match(new RegExp(`.{1,${MAX_SMS_LENGTH}}`, "g")) || [];
+
+    // Cap at 5 messages max
+    if (chunks.length > MAX_SMS_COUNT) {
+      chunks = [
+        ...chunks.slice(0, MAX_SMS_COUNT - 1),
+        chunks.slice(MAX_SMS_COUNT - 1).join(" ") + "\n...(message shortened)..."
+      ];
+    }
 
     console.log(`Preparing to send ${chunks.length} messages`);
 
@@ -93,8 +102,7 @@ app.post("/twilio/sms", async (req, res) => {
 
     // --- 4. Send sequentially with delay ---
     for (let i = 0; i < chunks.length; i++) {
-      const numbered = `(${i + 1}/${chunks.length}) ${chunks[i]}`;
-      await client.messages.create({ from, to, body: numbered });
+      await client.messages.create({ from, to, body: chunks[i] });
       console.log(`Sent chunk ${i + 1}/${chunks.length}`);
 
       if (i < chunks.length - 1) {
