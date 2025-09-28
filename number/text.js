@@ -10,8 +10,6 @@ dotenv.config();
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-const MessagingResponse = twilio.twiml.MessagingResponse;
-
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 console.log("Gemini API Key loaded?", !!GEMINI_API_KEY);
 
@@ -24,13 +22,28 @@ and always include safety thresholds if relevant. End with a gentle check-back l
 "Would you like more ideas?" or "Does that feel helpful?"
 `;
 
-const MAX_SMS_LENGTH = 1500; // Twilio limit is 1600, keep buffer
+const MAX_SMS_LENGTH = 700; // Twilio hard limit is 1600, keep buffer
+const MESSAGE_DELAY_MS = 4000; // 4s delay between sends
+
+// Twilio REST client
+const client = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
+
+// Sleep helper
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 app.post("/twilio/sms", async (req, res) => {
   const userMessage = req.body.Body;
+  const from = req.body.To;      // Twilio number
+  const to = req.body.From;      // User number
   console.log("Incoming SMS:", userMessage);
 
   try {
+    // --- 1. Call Gemini ---
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
       {
@@ -67,21 +80,31 @@ app.post("/twilio/sms", async (req, res) => {
         ?.trim() ||
       "Sorry love, Auntie’s having a little trouble answering right now.";
 
-    console.log("Auntie reply being sent:", auntieReply);
+    console.log("Auntie reply (full):", auntieReply);
 
-    // Break into multiple SMS chunks if needed
-    const twiml = new MessagingResponse();
-    const chunks = auntieReply.match(new RegExp(`.{1,${MAX_SMS_LENGTH}}`, "g")) || [];
-    chunks.forEach(chunk => twiml.message(chunk));
+    // --- 2. Split reply into chunks ---
+    let chunks = auntieReply.match(new RegExp(`.{1,${MAX_SMS_LENGTH}}`, "g")) || [];
 
+    console.log(`Preparing to send ${chunks.length} messages`);
+
+    // --- 3. Respond immediately to Twilio ---
     res.writeHead(200, { "Content-Type": "text/xml" });
-    res.end(twiml.toString());
+    res.end("<Response></Response>");
+
+    // --- 4. Send sequentially with delay ---
+    for (let i = 0; i < chunks.length; i++) {
+      const numbered = `(${i + 1}/${chunks.length}) ${chunks[i]}`;
+      await client.messages.create({ from, to, body: numbered });
+      console.log(`Sent chunk ${i + 1}/${chunks.length}`);
+
+      if (i < chunks.length - 1) {
+        await sleep(MESSAGE_DELAY_MS); // ⏳ 4s delay
+      }
+    }
   } catch (err) {
-    console.error("Gemini fetch failed:", err);
-    const twiml = new MessagingResponse();
-    twiml.message("Sorry love, Auntie’s having a little trouble answering right now.");
+    console.error("Error handling SMS:", err);
     res.writeHead(200, { "Content-Type": "text/xml" });
-    res.end(twiml.toString());
+    res.end("<Response><Message>Sorry love, Auntie’s having a little trouble answering right now.</Message></Response>");
   }
 });
 
