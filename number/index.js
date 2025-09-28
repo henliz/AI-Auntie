@@ -56,7 +56,7 @@ Voice & Wording:
 - Close: small check-back, never “Want me to text this?”
 `;
 
-const VOICE = 'alloy';
+const VOICE = 'coral';
 const TEMPERATURE = 0.8;
 const PORT = process.env.PORT || 5050;
 
@@ -87,8 +87,8 @@ fastify.all('/incoming-call', async (request, reply) => {
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
-      <Say voice="Google.en-US-Chirp3-HD-Aoede">
-        Please hold on just a moment while we bring Auntie to the phone. She’s SO excited to chat with you.
+      <Say voice="Google.en-US-Sage">
+        Please hold on just a moment while we bring Auntie to the phone. She’s so excited to chat with you.
       </Say>
       <Pause length="1"/>
       <Say voice="Google.en-US-Chirp3-HD-Aoede">Hey honey, what's going on?</Say>
