@@ -16,7 +16,7 @@ const LINKS = [
   { label: "How it Works", href: "#how" },
 ];
 
-export default function Nav({ logoSrc, brand = "Auntie", ctaHref = "#talk" }: NavProps) {
+export default function Nav({ logoSrc, brand = "Auntie", ctaHref = "#footer" }: NavProps) {
   const scrollTop = () =>
     window.scrollTo({ top: 0, behavior: "smooth" });
 

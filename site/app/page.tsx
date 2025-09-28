@@ -4,8 +4,7 @@ import Hero from "./hero";
 import AboutAuntie from "./aboutauntie";
 import Problem from "./problem";
 import HowItWorks from "./howitworks";
-
-
+import Footer from "./footer";
 
 
 export default function Home() {
@@ -32,6 +31,7 @@ export default function Home() {
         textPoster="/videos/text-poster.jpg"
         callPoster="/videos/call-poster.jpg"
       />
+      <Footer id="footer" className="footer" phone="+1 (226) 887-8632" />
     </>
   );
 }

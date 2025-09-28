@@ -32,7 +32,7 @@ export default function HowItWorks({
         title: "Call Auntie",
         blurb:
           "Prefer a voice? Call Auntie for a warm, judgment-free chat. We’ll listen, triage, and guide you.",
-        src: callVideo,
+        src: "CallAuntie.mov",
         poster: callPoster,
       },
     ],
