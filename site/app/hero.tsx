@@ -21,17 +21,6 @@ export default function Hero({
       {/* soft white + pink radial field */}
       <div className="bg" aria-hidden />
 
-      {leftImageSrc && (
-        <figure className="float left-float">
-          <img src={leftImageSrc} alt="" />
-        </figure>
-      )}
-      {rightImageSrc && (
-        <figure className="float right-float">
-          <img src={rightImageSrc} alt="" />
-        </figure>
-      )}
-
       <div className="container">
         <p className="eyebrow">
           If you need help at 3 am,

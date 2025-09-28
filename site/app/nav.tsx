@@ -17,17 +17,23 @@ const LINKS = [
 ];
 
 export default function Nav({ logoSrc, brand = "Auntie", ctaHref = "#talk" }: NavProps) {
+  const scrollTop = () =>
+    window.scrollTo({ top: 0, behavior: "smooth" });
+
   return (
     <div className="nav-fixed">
       <nav className="glass">
         <div className="left">
-          {logoSrc ? (
-            <img className="logo" src="AuntieLogo.png" alt={`${brand} logo`} />
-          ) : (
-            <div className="logo-placeholder" aria-hidden />
-          )}
-          {/* Brand styled to match "your Auntie" */}
-          <span className="brand-script">{brand}</span>
+          {/* Make logo + brand clickable to scroll to top */}
+          <button className="home" onClick={scrollTop} aria-label="Go to top">
+            {logoSrc ? (
+              <img className="logo" src="AuntieLogo.png" alt={`${brand} logo`} />
+            ) : (
+              <div className="logo-placeholder" aria-hidden />
+            )}
+            {/* Brand styled to match "your Auntie" */}
+            <span className="brand-script">{brand}</span>
+          </button>
         </div>
 
         <ul className="links">
@@ -92,15 +98,31 @@ export default function Nav({ logoSrc, brand = "Auntie", ctaHref = "#talk" }: Na
           border-radius: 9999px;
 
           color: var(--text-strong);
-          background: linear-gradient(135deg, rgba(255, 182, 193, 0.22), rgba(255, 105, 180, 0.18));
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
+
+          /* Stronger, frostier glass look */
+          background-color: rgba(255, 255, 255, 0.42);
+          background-image: linear-gradient(
+            135deg,
+            rgba(255, 182, 193, 0.24),
+            rgba(255, 105, 180, 0.20)
+          );
+          backdrop-filter: blur(50px) saturate(125%);
+          -webkit-backdrop-filter: blur(23px) saturate(125%);
           border: 1px solid rgba(255, 255, 255, 0.35);
           box-shadow:
             0 8px 24px rgba(234, 57, 141, 0.18),
             inset 0 1px 0 rgba(255, 255, 255, 0.35);
           overflow: hidden;
           pointer-events: auto; /* pill is clickable */
+        }
+        /* subtle top sheen */
+        .glass::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          background: linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0) 42%);
+          pointer-events: none;
         }
 
         .glow {
@@ -125,6 +147,22 @@ export default function Nav({ logoSrc, brand = "Auntie", ctaHref = "#talk" }: Na
           padding-left: 6px;
           z-index: 1;
         }
+        /* make logo+brand one clickable target */
+        .home {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          padding: 0;
+          margin: 0;
+          background: transparent;
+          border: 0;
+          cursor: pointer;
+        }
+        .home:focus-visible {
+          outline: 2px solid rgba(255, 105, 180, 0.45);
+          outline-offset: 3px;
+        }
+
         .logo { width: 45px; height: 45px; object-fit: contain; border-radius: 10px; background: rgba(255,255,255,0.18); }
         .logo-placeholder { width: 34px; height: 34px; border-radius: 10px; background: rgba(255,255,255,0.18); }
 

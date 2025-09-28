@@ -1,6 +1,8 @@
 // site/app/page.tsx
 import Nav from "./nav";
 import Hero from "./hero";
+import AboutAuntie from "./aboutauntie";
+
 
 export default function Home() {
   return (
@@ -13,6 +15,10 @@ export default function Home() {
         iconSrc="/images/appicon.png"     // optional
       />
       {/* rest of the page… */}
+      <AboutAuntie
+        topImageSrc="/images/about-top.jpg"
+        bottomImageSrc="/images/about-bottom.jpg"
+      />
     </>
   );
 }
