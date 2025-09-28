@@ -22,7 +22,7 @@ and always include safety thresholds if relevant. End with a gentle check-back l
 "Would you like more ideas?" or "Does that feel helpful?"
 `;
 
-const MAX_SMS_LENGTH = 400; // new limit per chunk
+const MAX_SMS_LENGTH = 400; // limit per chunk
 const MAX_SMS_COUNT = 5;    // cap Auntie at 5 messages
 const MESSAGE_DELAY_MS = 4000; // 4s delay between sends
 
@@ -35,6 +35,30 @@ const client = twilio(
 // Sleep helper
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Sentence-aware splitter
+function splitBySentences(text, maxLength = 400, maxMessages = 5) {
+  const sentences = text.split(/(?<=[.!?])\s+/); // split by punctuation
+  const chunks = [];
+  let current = "";
+
+  for (const sentence of sentences) {
+    if ((current + " " + sentence).trim().length <= maxLength) {
+      current += (current ? " " : "") + sentence;
+    } else {
+      if (current) chunks.push(current);
+      current = sentence;
+    }
+    if (chunks.length >= maxMessages) break;
+  }
+
+  if (current && chunks.length < maxMessages) {
+    chunks.push(current);
+  }
+
+  // Cap at maxMessages
+  return chunks.slice(0, maxMessages);
 }
 
 app.post("/twilio/sms", async (req, res) => {
@@ -83,16 +107,8 @@ app.post("/twilio/sms", async (req, res) => {
 
     console.log("Auntie reply (full):", auntieReply);
 
-    // --- 2. Split reply into 400-char chunks ---
-    let chunks = auntieReply.match(new RegExp(`.{1,${MAX_SMS_LENGTH}}`, "g")) || [];
-
-    // Cap at 5 messages max
-    if (chunks.length > MAX_SMS_COUNT) {
-      chunks = [
-        ...chunks.slice(0, MAX_SMS_COUNT - 1),
-        chunks.slice(MAX_SMS_COUNT - 1).join(" ") + "\n...(message shortened)..."
-      ];
-    }
+    // --- 2. Split reply into complete-thought chunks ---
+    let chunks = splitBySentences(auntieReply, MAX_SMS_LENGTH, MAX_SMS_COUNT);
 
     console.log(`Preparing to send ${chunks.length} messages`);
 
