@@ -24,7 +24,9 @@ and always include safety thresholds if relevant. End with a gentle check-back l
 "Would you like more ideas?" or "Does that feel helpful?"
 `;
 
-app.post("/twilio/sms", async (req, res) => {
+const MAX_SMS_LENGTH = 1500; // Twilio limit is 1600, keep buffer
+
+app.post("/sms", async (req, res) => {
   const userMessage = req.body.Body;
   console.log("Incoming SMS:", userMessage);
 
@@ -47,18 +49,30 @@ app.post("/twilio/sms", async (req, res) => {
     );
 
     console.log("Gemini HTTP status:", response.status);
-    const data = await response.json().catch(err => ({ error: err.message }));
-    console.log("Gemini raw response:", JSON.stringify(data, null, 2));
+    let rawText = await response.text();
+    console.log("Gemini raw response text:", rawText);
+
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch (err) {
+      console.error("Error parsing JSON:", err);
+      data = {};
+    }
 
     const auntieReply =
-    data?.candidates?.[0]?.content?.parts
+      data?.candidates?.[0]?.content?.parts
         ?.map(p => p.text)
         .join(" ")
         ?.trim() ||
-    "Sorry love, Auntie’s having a little trouble answering right now.";
+      "Sorry love, Auntie’s having a little trouble answering right now.";
 
+    console.log("Auntie reply being sent:", auntieReply);
+
+    // Break into multiple SMS chunks if needed
     const twiml = new MessagingResponse();
-    twiml.message(auntieReply);
+    const chunks = auntieReply.match(new RegExp(`.{1,${MAX_SMS_LENGTH}}`, "g")) || [];
+    chunks.forEach(chunk => twiml.message(chunk));
 
     res.writeHead(200, { "Content-Type": "text/xml" });
     res.end(twiml.toString());
